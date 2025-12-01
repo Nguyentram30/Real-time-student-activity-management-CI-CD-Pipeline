@@ -13,6 +13,7 @@ const roleLabels: Record<string, string> = {
   student: "Sinh viên",
   manager: "Quản lý",
   admin: "Admin",
+  guest: "Khách",
 };
 
 const statusLabels: Record<string, string> = {
@@ -61,7 +62,7 @@ const AdminUsersPage = () => {
 
   function UserCreateModal({ onCreated }) {
     const [open, setOpen] = useState(false);
-    const { register, handleSubmit, reset } = useForm();
+    const { register, handleSubmit, reset, watch } = useForm();
     const [loading, setLoading] = useState(false);
     const [errorMsg, setErrorMsg] = useState("");
     return (
@@ -80,7 +81,7 @@ const AdminUsersPage = () => {
             onSubmit={handleSubmit(async (data) => {
               // Validate
               if (!data.fullName || !data.email || !data.username || !data.password) {
-                setErrorMsg("Vui lòng điền đầy đủ thông tin");
+                setErrorMsg("Vui lòng điền đầy đủ thông tin bắt buộc");
                 return;
               }
               if (data.password.length < 6) {
@@ -92,6 +93,18 @@ const AdminUsersPage = () => {
                 setErrorMsg("Email không hợp lệ");
                 return;
               }
+              
+              // Validate student-specific fields if role is student
+              if (data.role === "student") {
+                if (!data.studentCode) {
+                  setErrorMsg("MSSV là bắt buộc cho tài khoản sinh viên");
+                  return;
+                }
+                if (data.phoneNumber && !/^\d{10}$/.test(data.phoneNumber)) {
+                  setErrorMsg("Số điện thoại phải có 10 số");
+                  return;
+                }
+              }
 
               setLoading(true);
               setErrorMsg("");
@@ -102,7 +115,13 @@ const AdminUsersPage = () => {
                   username: data.username,
                   password: data.password,
                   role: data.role || "student",
-                  status: data.status || "active"
+                  status: data.status || "active",
+                  studentCode: data.studentCode,
+                  phoneNumber: data.phoneNumber,
+                  department: data.department,
+                  class: data.class,
+                  dateOfBirth: data.dateOfBirth,
+                  address: data.address
                 });
                 reset();
                 setOpen(false);
@@ -127,8 +146,22 @@ const AdminUsersPage = () => {
                 <SelectItem value="admin">Admin</SelectItem>
                 <SelectItem value="manager">Quản lý</SelectItem>
                 <SelectItem value="student">Sinh viên</SelectItem>
+                <SelectItem value="guest">Khách</SelectItem>
               </SelectContent>
             </Select>
+            
+            {/* Student-specific fields */}
+            {watch("role") === "student" && (
+              <>
+                <Input placeholder="MSSV *" {...register("studentCode", { required: "MSSV là bắt buộc" })} />
+                <Input placeholder="Số điện thoại (10 số)" type="tel" maxLength={10} {...register("phoneNumber")} />
+                <Input placeholder="Khoa / Ngành" {...register("department")} />
+                <Input placeholder="Lớp" {...register("class")} />
+                <Input placeholder="Ngày sinh" type="date" {...register("dateOfBirth")} />
+                <Input placeholder="Địa chỉ" {...register("address")} />
+              </>
+            )}
+            
             <Select {...register("status", { required: true })}>
               <SelectTrigger><SelectValue placeholder="Trạng thái *" /></SelectTrigger>
               <SelectContent>
@@ -175,6 +208,7 @@ const AdminUsersPage = () => {
                 <SelectItem value="admin">Admin</SelectItem>
                 <SelectItem value="manager">Quản lý</SelectItem>
                 <SelectItem value="student">Sinh viên</SelectItem>
+                <SelectItem value="guest">Khách</SelectItem>
               </SelectContent>
             </Select>
             <Select value={status} onValueChange={setStatus}>
@@ -217,6 +251,7 @@ const AdminUsersPage = () => {
             <option value="student">Sinh viên</option>
             <option value="manager">Quản lý</option>
             <option value="admin">Admin</option>
+            <option value="guest">Khách</option>
           </select>
           <select
             value={statusFilter}

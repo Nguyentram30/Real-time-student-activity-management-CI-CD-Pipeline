@@ -11,8 +11,11 @@ export const ensureDefaultAdmin = async () => {
   if (existing) {
     if (existing.role !== "admin") {
       existing.role = "admin";
-      await existing.save();
     }
+    existing.emailVerified = true;
+    existing.isActive = true;
+    existing.status = "active";
+    await existing.save();
     return;
   }
 
@@ -24,6 +27,8 @@ export const ensureDefaultAdmin = async () => {
     displayName,
     role: "admin",
     status: "active",
+    emailVerified: true,
+    isActive: true,
   });
 
   console.log("Default admin account ready:");

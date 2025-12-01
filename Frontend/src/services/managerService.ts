@@ -7,11 +7,19 @@ export interface ManagerActivity {
   location?: string;
   type?: string;
   status: string;
+  isDraft?: boolean;
+  parentActivity?: string;
   startTime?: string;
   endTime?: string;
+  start_checkin_time?: string;
+  end_checkin_time?: string;
   participantCount?: number;
   maxParticipants?: number;
   createdAt?: string;
+  meta?: Record<string, any>;
+  approvalNotes?: string;
+  conditionNote?: string;
+  editRequestNote?: string;
 }
 
 export interface ManagerStudent {
@@ -82,6 +90,28 @@ export const managerService = {
 
   async deleteActivity(id: string) {
     await api.delete(`/manager/activities/${id}`);
+  },
+
+  async previewActivity(payload: Partial<ManagerActivity>) {
+    const res = await api.post<{ preview: ManagerActivity }>("/manager/activities/preview", payload);
+    return res.data.preview;
+  },
+
+  async checkConflicts(payload: { location: string; startTime: string; endTime: string; activityId?: string }) {
+    const res = await api.post("/manager/activities/check-conflicts", payload);
+    return res.data;
+  },
+
+  async getCompletedActivities(limit = 20) {
+    const res = await api.get<{ activities: ManagerActivity[] }>(`/manager/activities/completed`, {
+      params: { limit },
+    });
+    return res.data.activities;
+  },
+
+  async cloneActivity(id: string) {
+    const res = await api.post<ManagerActivity>(`/manager/activities/${id}/clone`);
+    return res.data;
   },
 
   async getActivityRegistrations(activityId: string) {
@@ -172,6 +202,18 @@ export const managerService = {
     }>("/manager/upload", formData, {
       headers: { "Content-Type": "multipart/form-data" },
     });
+    return res.data;
+  },
+
+  async createActivityQRCode(activityId: string, expiresAt?: string) {
+    const res = await api.post<{ qrCode: string; qrCodeRecord: any }>(`/manager/activities/${activityId}/qr-code`, {
+      expiresAt,
+    });
+    return res.data;
+  },
+
+  async getActivityQRCode(activityId: string) {
+    const res = await api.get<{ qrCodeRecord: any }>(`/manager/activities/${activityId}/qr-code`);
     return res.data;
   },
 };

@@ -200,19 +200,19 @@ export default function DashboardPage() {
                     const status = activity.registrationStatus || "pending";
                     if (status === "pending") {
                       return {
-                        label: "Chờ Manager duyệt",
+                        label: "Đã đăng ký (pending Manager)",
                         color: "bg-amber-500/20 text-amber-300 border-amber-400/40",
                         icon: Clock,
                       };
                     } else if (status === "approved") {
                       return {
-                        label: "Chờ Admin duyệt",
-                        color: "bg-blue-500/20 text-blue-300 border-blue-400/40",
-                        icon: Clock,
+                        label: "Đã duyệt (Manager duyệt)",
+                        color: "bg-green-500/20 text-green-300 border-green-400/40",
+                        icon: CheckCircle2,
                       };
                     } else if (status === "rejected") {
                       return {
-                        label: "Không được duyệt",
+                        label: "Bị từ chối (Manager từ chối)",
                         color: "bg-red-500/20 text-red-300 border-red-400/40",
                         icon: XCircle,
                       };
@@ -256,11 +256,26 @@ export default function DashboardPage() {
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 flex-wrap">
                           <span className={`px-3 py-1 rounded-full text-xs font-medium border flex items-center gap-1 ${statusInfo.color}`}>
                             <StatusIcon size={12} />
                             {statusInfo.label}
                           </span>
+                          {/* Trạng thái điểm danh */}
+                          {activity.attendanceStatus && (
+                            <span className={`px-3 py-1 rounded-full text-xs font-medium border flex items-center gap-1 ${
+                              activity.attendanceStatus === "Đã điểm danh"
+                                ? "bg-green-500/20 text-green-300 border-green-400/40"
+                                : activity.attendanceStatus === "Quá hạn"
+                                ? "bg-red-500/20 text-red-300 border-red-400/40"
+                                : "bg-amber-500/20 text-amber-300 border-amber-400/40"
+                            }`}>
+                              {activity.attendanceStatus === "Đã điểm danh" && <CheckCircle2 size={12} />}
+                              {activity.attendanceStatus === "Quá hạn" && <XCircle size={12} />}
+                              {activity.attendanceStatus === "Chưa điểm danh" && <Clock size={12} />}
+                              {activity.attendanceStatus}
+                            </span>
+                          )}
                         </div>
                       </div>
                       {activity.registrationStatus === "rejected" && activity.note && (

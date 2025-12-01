@@ -3,11 +3,14 @@ import {
   getManagerDashboard,
   listManagerActivities,
   createManagerActivity,
+  previewManagerActivity,
   updateManagerActivity,
   deleteManagerActivity,
   listActivityRegistrations,
   approveRegistration,
   rejectRegistration,
+  approveEvidence,
+  rejectEvidence,
   listManagerStudents,
   listManagerNotifications,
   createManagerNotification,
@@ -17,6 +20,11 @@ import {
   replyFeedback,
   getManagerReports,
   exportManagerReports,
+  createActivityQRCode,
+  getActivityQRCode,
+  checkActivityConflicts,
+  listCompletedActivities,
+  cloneManagerActivity,
 } from "../controllers/managerControllers.js";
 import { upload, uploadMultiple } from "../utils/uploadMiddleware.js";
 import { uploadFile, uploadMultipleFiles } from "../controllers/uploadControllers.js";
@@ -24,6 +32,10 @@ import { uploadFile, uploadMultipleFiles } from "../controllers/uploadController
 const router = express.Router();
 
 router.get("/dashboard", getManagerDashboard);
+
+router.post("/activities/preview", previewManagerActivity);
+router.post("/activities/check-conflicts", checkActivityConflicts);
+router.get("/activities/completed", listCompletedActivities);
 
 router
   .route("/activities")
@@ -33,10 +45,15 @@ router
   .route("/activities/:id")
   .put(updateManagerActivity)
   .delete(deleteManagerActivity);
+router.post("/activities/:id/clone", cloneManagerActivity);
 
 router.get("/activities/:id/registrations", listActivityRegistrations);
 router.post("/activities/:id/registrations/:registrationId/approve", approveRegistration);
 router.post("/activities/:id/registrations/:registrationId/reject", rejectRegistration);
+router.post("/activities/:id/registrations/:registrationId/approve-evidence", approveEvidence);
+router.post("/activities/:id/registrations/:registrationId/reject-evidence", rejectEvidence);
+router.post("/activities/:id/qr-code", createActivityQRCode);
+router.get("/activities/:id/qr-code", getActivityQRCode);
 
 router.get("/students", listManagerStudents);
 

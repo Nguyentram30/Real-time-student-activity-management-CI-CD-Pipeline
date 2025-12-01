@@ -15,6 +15,12 @@ const attendanceSchema = new mongoose.Schema(
       default: "manual",
     },
     checkInTime: { type: Date, default: Date.now },
+    AttendanceTime: { type: Date }, // Thời gian điểm danh
+    AttendanceStatus: {
+      type: String,
+      enum: ["Đã điểm danh", "Chưa điểm danh", "Quá hạn"],
+      default: "Chưa điểm danh",
+    },
     note: { type: String },
     mediaEvidence: { type: String },
     location: {

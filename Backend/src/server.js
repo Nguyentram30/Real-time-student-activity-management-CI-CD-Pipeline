@@ -20,7 +20,23 @@ const PORT = process.env.PORT || 5001;
 // middlewares
 app.use(express.json());
 app.use(cookieParser());
-app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
+// Configure CORS to allow the client origin. In development we accept multiple localhost ports.
+const clientUrl = process.env.CLIENT_URL;
+const allowedOrigins = [clientUrl, "http://localhost:5173", "http://localhost:5174"].filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // allow requests with no origin (like mobile apps or curl)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  })
+);
 
 // Serve uploaded files
 import { fileURLToPath } from "url";

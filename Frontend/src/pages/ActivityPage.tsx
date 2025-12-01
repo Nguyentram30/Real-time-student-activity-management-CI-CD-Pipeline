@@ -19,7 +19,7 @@ import { toast } from "sonner";
 // NOTE: sample local image present in container - used as fallback image url
 const LOCAL_FALLBACK_IMAGE = "/mnt/data/b16809a1-7a24-41c7-9379-ab3044da213f.png";
 
-interface Activity {
+  interface Activity {
   _id?: string;
   id?: number | string;
   title: string;
@@ -38,6 +38,11 @@ interface Activity {
   isClosed?: boolean;
   registered?: boolean;
   tags?: string[];
+  startTime?: string;
+  EvidenceDeadline?: string;
+  AttendanceTime?: string;
+  start_checkin_time?: string;
+  end_checkin_time?: string;
 }
 
 const tagStyles: Record<string, string> = {
@@ -400,51 +405,84 @@ export default function ActivityPage() {
                       </div>
 
                       {/* --- CHECK-IN BUTTONS --- */}
-                      <div className="flex items-center justify-between gap-2 sm:gap-4 flex-wrap sm:flex-nowrap">
-                        <button
-                          onClick={() => isLoggedIn && handleCheckInQR(act)}
-                          disabled={!isLoggedIn || isLoading}
-                          className={`flex-1 min-w-[120px] px-3 py-2.5 sm:py-3 rounded-lg text-xs sm:text-sm transition ${
-                            isLoggedIn && !isLoading
-                              ? "bg-slate-800/40 hover:bg-slate-800/60 text-white"
-                              : "bg-slate-800/20 text-slate-500 cursor-not-allowed"
-                          }`}
-                        >
-                          {isLoggedIn ? (
-                            isLoading ? (
-                              <span className="flex items-center justify-center gap-1">
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                <span className="hidden sm:inline">Đang xử lý...</span>
-                              </span>
-                            ) : (
-                              "Check-in QR"
-                            )
-                          ) : (
-                            <span className="hidden sm:inline">Đăng nhập để check-in</span>
-                          )}
-                        </button>
+                      {/* Chỉ hiển thị nút điểm danh nếu đã đăng ký và được Manager duyệt */}
+                      {isLoggedIn && act.registered && act.registrationStatus === "approved" && (
+                        <div className="flex items-center justify-between gap-2 sm:gap-4 flex-wrap sm:flex-nowrap">
+                          {(() => {
+                            const now = new Date();
+                            const attendanceTime = act.AttendanceTime ? new Date(act.AttendanceTime) : null;
+                            const startCheckIn = act.start_checkin_time ? new Date(act.start_checkin_time) : null;
+                            const endCheckIn = act.end_checkin_time ? new Date(act.end_checkin_time) : null;
+                            
+                            // Kiểm tra thời gian điểm danh
+                            let canCheckIn = true;
+                            let checkInMessage = "";
+                            
+                            if (startCheckIn && endCheckIn) {
+                              if (now < startCheckIn) {
+                                canCheckIn = false;
+                                checkInMessage = "Chưa tới thời gian điểm danh";
+                              } else if (now > endCheckIn) {
+                                canCheckIn = false;
+                                checkInMessage = "Hết hạn điểm danh";
+                              }
+                            } else if (attendanceTime) {
+                              // Nếu chỉ có AttendanceTime, kiểm tra xem có trong thời gian không
+                              const activityStart = act.startTime ? new Date(act.startTime) : null;
+                              if (activityStart && now < activityStart) {
+                                canCheckIn = false;
+                                checkInMessage = "Chưa tới thời gian điểm danh";
+                              }
+                            }
+                            
+                            return (
+                              <>
+                                <button
+                                  onClick={() => canCheckIn && handleCheckInQR(act)}
+                                  disabled={!canCheckIn || isLoading}
+                                  className={`flex-1 min-w-[120px] px-3 py-2.5 sm:py-3 rounded-lg text-xs sm:text-sm transition ${
+                                    canCheckIn && !isLoading
+                                      ? "bg-slate-800/40 hover:bg-slate-800/60 text-white"
+                                      : "bg-slate-800/20 text-slate-500 cursor-not-allowed"
+                                  }`}
+                                >
+                                  {isLoading ? (
+                                    <span className="flex items-center justify-center gap-1">
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                      <span className="hidden sm:inline">Đang xử lý...</span>
+                                    </span>
+                                  ) : checkInMessage ? (
+                                    checkInMessage
+                                  ) : (
+                                    "Check-in QR"
+                                  )}
+                                </button>
 
-                        <button
-                          onClick={() => isLoggedIn && handleCheckInGPS(act)}
-                          disabled={!isLoggedIn || isLoading || geoLoadingId === id}
-                          className={`flex-1 min-w-[120px] px-3 py-2.5 sm:py-3 rounded-lg text-xs sm:text-sm transition ${
-                            isLoggedIn && !isLoading && geoLoadingId !== id
-                              ? "bg-slate-800/40 hover:bg-slate-800/60 text-white"
-                              : "bg-slate-800/20 text-slate-500 cursor-not-allowed"
-                          }`}
-                        >
-                          {!isLoggedIn ? (
-                            <span className="hidden sm:inline">Đăng nhập để check-in</span>
-                          ) : geoLoadingId === id ? (
-                            <span className="flex items-center justify-center gap-1">
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                              <span className="hidden sm:inline">Đang lấy vị trí...</span>
-                            </span>
-                          ) : (
-                            "Check-in GPS"
-                          )}
-                        </button>
-                      </div>
+                                <button
+                                  onClick={() => canCheckIn && handleCheckInGPS(act)}
+                                  disabled={!canCheckIn || isLoading || geoLoadingId === id}
+                                  className={`flex-1 min-w-[120px] px-3 py-2.5 sm:py-3 rounded-lg text-xs sm:text-sm transition ${
+                                    canCheckIn && !isLoading && geoLoadingId !== id
+                                      ? "bg-slate-800/40 hover:bg-slate-800/60 text-white"
+                                      : "bg-slate-800/20 text-slate-500 cursor-not-allowed"
+                                  }`}
+                                >
+                                  {geoLoadingId === id ? (
+                                    <span className="flex items-center justify-center gap-1">
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                      <span className="hidden sm:inline">Đang lấy vị trí...</span>
+                                    </span>
+                                  ) : checkInMessage ? (
+                                    checkInMessage
+                                  ) : (
+                                    "Check-in GPS"
+                                  )}
+                                </button>
+                              </>
+                            );
+                          })()}
+                        </div>
+                      )}
 
                       {/* --- BUTTON ĐĂNG KÝ / MINH CHỨNG --- */}
                       <div className="w-full">
@@ -455,7 +493,7 @@ export default function ActivityPage() {
                           >
                             Đăng nhập để đăng ký
                           </Link>
-                        ) : act.isClosed || act.status === "Đã kết thúc" ? (
+                        ) : act.isClosed || act.status === "Completed" ? (
                           <button className="w-full py-3 bg-gray-600 rounded-lg cursor-not-allowed" disabled>
                             Hoạt động đã đóng
                           </button>
@@ -474,21 +512,43 @@ export default function ActivityPage() {
                               "Đăng ký tham gia"
                             )}
                           </button>
-                        ) : !act.evidence && !act.evidenceUrl && !act.evidenceNote ? (
-                          <button
-                            onClick={() => handleUpload(act)}
-                            className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 rounded-lg flex items-center justify-center gap-2 text-white font-semibold transition"
-                            disabled={isLoading}
-                          >
-                            {isLoading ? (
-                              <>
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                                Đang xử lý...
-                              </>
+                        ) : act.registrationStatus === "pending" ? (
+                          <div className="w-full py-3 bg-amber-500/20 border border-amber-400/40 text-amber-300 rounded-lg flex items-center justify-center gap-2 font-semibold">
+                            <Clock size={16} />
+                            Chờ Manager duyệt
+                          </div>
+                        ) : act.registrationStatus === "rejected" ? (
+                          <div className="w-full py-3 bg-red-500/20 border border-red-400/40 text-red-300 rounded-lg flex items-center justify-center gap-2 font-semibold">
+                            <XCircle size={16} />
+                            Đăng ký bị từ chối
+                          </div>
+                        ) : act.registrationStatus === "approved" && (!act.evidence && !act.evidenceUrl && !act.evidenceNote) ? (
+                          (() => {
+                            const now = new Date();
+                            const evidenceDeadline = act.EvidenceDeadline ? new Date(act.EvidenceDeadline) : null;
+                            const canUpload = !evidenceDeadline || now <= evidenceDeadline;
+                            
+                            return canUpload ? (
+                              <button
+                                onClick={() => handleUpload(act)}
+                                className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 rounded-lg flex items-center justify-center gap-2 text-white font-semibold transition"
+                                disabled={isLoading}
+                              >
+                                {isLoading ? (
+                                  <>
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    Đang xử lý...
+                                  </>
+                                ) : (
+                                  "Nộp minh chứng"
+                                )}
+                              </button>
                             ) : (
-                              "Nộp minh chứng"
-                            )}
-                          </button>
+                              <div className="w-full py-3 bg-gray-500/20 border border-gray-400/40 text-gray-300 rounded-lg flex items-center justify-center gap-2 font-semibold">
+                                Hết hạn nộp minh chứng
+                              </div>
+                            );
+                          })()
                         ) : (
                           <div className="flex flex-col gap-2">
                             <div className="px-4 py-3 border border-cyan-400 text-cyan-400 hover:bg-cyan-400/10 rounded-xl transition flex items-center gap-2">

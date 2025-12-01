@@ -241,6 +241,68 @@ const AdminActivitiesPage = () => {
   const [typeFilter, setTypeFilter] = useState("all");
   const [loading, setLoading] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const handleApprove = async (activity: AdminActivity) => {
+    if (!confirm(`Phê duyệt hoạt động "${activity.title}"?`)) return;
+    const note = prompt("Ghi chú gửi cho quản lý (không bắt buộc):") || undefined;
+    try {
+      await adminService.approveActivity(activity._id, note ? { note } : undefined);
+      toast.success("Đã phê duyệt hoạt động");
+      setReloadKey((prev) => prev + 1);
+    } catch (error: any) {
+      const message = error?.response?.data?.message || error?.message || "Không thể phê duyệt hoạt động";
+      toast.error(message);
+    }
+  };
+
+  const handleApproveWithCondition = async (activity: AdminActivity) => {
+    const condition = prompt("Nhập điều kiện phê duyệt:");
+    if (!condition) return;
+    try {
+      await adminService.approveActivityWithCondition(activity._id, { condition });
+      toast.success("Đã phê duyệt có điều kiện");
+      setReloadKey((prev) => prev + 1);
+    } catch (error: any) {
+      const message = error?.response?.data?.message || error?.message || "Không thể phê duyệt có điều kiện";
+      toast.error(message);
+    }
+  };
+
+  const handleRequestEdit = async (activity: AdminActivity) => {
+    const feedback = prompt("Nhập phản hồi yêu cầu chỉnh sửa:");
+    if (!feedback) return;
+    try {
+      await adminService.requestActivityEdit(activity._id, { feedback });
+      toast.success("Đã gửi yêu cầu chỉnh sửa");
+      setReloadKey((prev) => prev + 1);
+    } catch (error: any) {
+      const message = error?.response?.data?.message || error?.message || "Không thể gửi yêu cầu chỉnh sửa";
+      toast.error(message);
+    }
+  };
+
+  const handleReject = async (activity: AdminActivity) => {
+    const reason = prompt("Nhập lý do từ chối:");
+    if (!reason) return;
+    try {
+      await adminService.rejectActivity(activity._id, { reason });
+      toast.success("Đã từ chối hoạt động");
+      setReloadKey((prev) => prev + 1);
+    } catch (error: any) {
+      const message = error?.response?.data?.message || error?.message || "Không thể từ chối hoạt động";
+      toast.error(message);
+    }
+  };
+  const statusLabelMap: Record<string, string> = {
+    Draft: "Bản nháp",
+    Pending: "Chờ duyệt",
+    Approved: "Đã phê duyệt",
+    ApprovedWithCondition: "Phê duyệt có điều kiện",
+    NeedEdit: "Cần chỉnh sửa",
+    Rejected: "Bị từ chối",
+    Open: "Đang diễn ra",
+    Completed: "Đã kết thúc",
+    Cancelled: "Đã hủy",
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -297,9 +359,15 @@ const AdminActivitiesPage = () => {
             />
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm">
               <option value="all">Tất cả trạng thái</option>
-              <option value="Đang mở">Đang mở</option>
-              <option value="Chờ phê duyệt">Chờ phê duyệt</option>
-              <option value="Đã kết thúc">Đã kết thúc</option>
+              <option value="draft">Bản nháp</option>
+              <option value="pending">Chờ duyệt</option>
+              <option value="approved">Đã phê duyệt</option>
+              <option value="approvedwithcondition">Phê duyệt có điều kiện</option>
+              <option value="neededit">Cần chỉnh sửa</option>
+              <option value="rejected">Bị từ chối</option>
+              <option value="active">Đang diễn ra</option>
+              <option value="completed">Đã kết thúc</option>
+              <option value="cancelled">Đã hủy</option>
             </select>
             <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm">
               <option value="all">Loại hoạt động</option>
@@ -324,27 +392,40 @@ const AdminActivitiesPage = () => {
                 </div>
                 <div className="flex items-center gap-4 text-sm text-slate-400">
                   <span className="flex items-center gap-2"><Calendar size={14} />{formatDate(activity.startTime)}</span>
-                  <span className="flex items-center gap-2"><CheckCircle2 size={14} />{activity.status}</span>
+                  <span className="flex items-center gap-2">
+                    <CheckCircle2 size={14} />
+                    {statusLabelMap[activity.status] || activity.status}
+                  </span>
                 </div>
                 <div className="flex flex-wrap gap-2 text-blue-900">
                   <ActivityDetailModal activity={activity} />
-                  {activity.status === "Chờ phê duyệt" && (
-                    <button
-                      onClick={async () => {
-                        if (!confirm(`Duyệt hoạt động "${activity.title}"?`)) return;
-                        try {
-                          await adminService.updateActivity(activity._id, { status: "Đang mở" });
-                          setReloadKey((prev) => prev + 1);
-                          toast.success("Đã duyệt hoạt động! Sinh viên có thể thấy hoạt động này.");
-                        } catch (error) {
-                          console.error("Không thể duyệt hoạt động", error);
-                          toast.error("Không thể duyệt hoạt động");
-                        }
-                      }}
-                      className="px-3 py-1 text-xs rounded-full border border-emerald-400/40 text-emerald-200 hover:bg-emerald-500/10 text-blue-900"
-                    >
-                      ✓ Duyệt hoạt động
-                    </button>
+                  {["Pending", "NeedEdit"].includes(activity.status) && (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => handleApprove(activity)}
+                        className="px-3 py-1 text-xs rounded-full border border-emerald-400/40 text-emerald-200 hover:bg-emerald-500/10"
+                      >
+                        ✓ Phê duyệt
+                      </button>
+                      <button
+                        onClick={() => handleApproveWithCondition(activity)}
+                        className="px-3 py-1 text-xs rounded-full border border-cyan-400/40 text-cyan-200 hover:bg-cyan-500/10"
+                      >
+                        Điều kiện
+                      </button>
+                      <button
+                        onClick={() => handleRequestEdit(activity)}
+                        className="px-3 py-1 text-xs rounded-full border border-amber-400/40 text-amber-200 hover:bg-amber-500/10"
+                      >
+                        Yêu cầu chỉnh sửa
+                      </button>
+                      <button
+                        onClick={() => handleReject(activity)}
+                        className="px-3 py-1 text-xs rounded-full border border-rose-400/40 text-rose-200 hover:bg-rose-500/10"
+                      >
+                        Từ chối
+                      </button>
+                    </div>
                   )}
                   <EditActivityModal activity={activity} onUpdated={() => setReloadKey((prev) => prev + 1)} />
                   <button className="px-3 py-1 text-xs rounded-full border border-cyan-400/40 hover:bg-cyan-500/10 text-blue-900">

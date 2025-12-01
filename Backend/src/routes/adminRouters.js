@@ -25,6 +25,10 @@ import {
   updateNotification,
   updateSystemWidget,
   updateUser,
+  approveActivity,
+  approveActivityWithCondition,
+  requestActivityEdit,
+  rejectActivity,
 } from "../controllers/adminControllers.js";
 import { upload, uploadMultiple } from "../utils/uploadMiddleware.js";
 import { uploadFile, uploadMultipleFiles } from "../controllers/uploadControllers.js";
@@ -44,6 +48,10 @@ router
   .get(listActivities)
   .post(createActivity);
 router.route("/activities/:id").put(updateActivity).delete(deleteActivity);
+router.post("/activities/:id/approve", approveActivity);
+router.post("/activities/:id/approve-with-condition", approveActivityWithCondition);
+router.post("/activities/:id/request-edit", requestActivityEdit);
+router.post("/activities/:id/reject", rejectActivity);
 
 router.get("/students", listStudents);
 router.get("/students/export", exportStudents);

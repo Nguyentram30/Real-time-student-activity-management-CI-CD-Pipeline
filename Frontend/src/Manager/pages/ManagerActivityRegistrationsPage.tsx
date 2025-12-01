@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import ManagerLayout from "../components/ManagerLayout";
 import { managerService } from "@/services/managerService";
 import { toast } from "sonner";
-import { ArrowLeft, CheckCircle2, XCircle, Clock, Loader2, User, Mail, GraduationCap } from "lucide-react";
+import { ArrowLeft, CheckCircle2, XCircle, Clock, Loader2, User, Mail, GraduationCap, QrCode, Copy } from "lucide-react";
 
 const ManagerActivityRegistrationsPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -11,11 +11,52 @@ const ManagerActivityRegistrationsPage = () => {
   const [registrations, setRegistrations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [qrCode, setQrCode] = useState<string | null>(null);
+  const [qrLoading, setQrLoading] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
 
   useEffect(() => {
     if (!id) return;
     fetchRegistrations();
+    fetchQRCode();
   }, [id]);
+
+  const fetchQRCode = async () => {
+    if (!id) return;
+    try {
+      const data = await managerService.getActivityQRCode(id);
+      if (data.qrCodeRecord) {
+        setQrCode(data.qrCodeRecord.qrCode);
+      }
+    } catch (error: any) {
+      // QR code chưa được tạo, không hiển thị lỗi
+      setQrCode(null);
+    }
+  };
+
+  const handleCreateQRCode = async () => {
+    if (!id) return;
+    try {
+      setQrLoading(true);
+      const data = await managerService.createActivityQRCode(id);
+      setQrCode(data.qrCode);
+      setShowQrModal(true);
+      toast.success("Tạo mã QR thành công!");
+    } catch (error: any) {
+      console.error("Lỗi tạo mã QR:", error);
+      const errorMessage = error?.response?.data?.message || error?.message || "Không thể tạo mã QR";
+      toast.error(errorMessage);
+    } finally {
+      setQrLoading(false);
+    }
+  };
+
+  const handleCopyQRCode = () => {
+    if (qrCode) {
+      navigator.clipboard.writeText(qrCode);
+      toast.success("Đã sao chép mã QR!");
+    }
+  };
 
   const fetchRegistrations = async () => {
     if (!id) return;
@@ -137,6 +178,52 @@ const ManagerActivityRegistrationsPage = () => {
           </div>
         ) : (
           <div className="space-y-6">
+            {/* QR Code Section */}
+            <div className="bg-[#0b1021]/60 border border-white/10 rounded-2xl p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <QrCode size={20} className="text-cyan-400" />
+                  Mã QR điểm danh
+                </h3>
+                {qrCode ? (
+                  <button
+                    onClick={() => setShowQrModal(true)}
+                    className="px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 rounded-lg text-sm transition flex items-center gap-2"
+                  >
+                    <QrCode size={16} />
+                    Xem mã QR
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleCreateQRCode}
+                    disabled={qrLoading}
+                    className="px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 rounded-lg text-sm transition flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {qrLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Đang tạo...
+                      </>
+                    ) : (
+                      <>
+                        <QrCode size={16} />
+                        Tạo mã QR
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+              {qrCode ? (
+                <p className="text-sm text-slate-400">
+                  Mã QR đã được tạo. Sinh viên có thể sử dụng mã này để điểm danh trong thời gian cho phép.
+                </p>
+              ) : (
+                <p className="text-sm text-slate-400">
+                  Chưa có mã QR. Tạo mã QR để sinh viên có thể điểm danh bằng QR code.
+                </p>
+              )}
+            </div>
+
             {/* Stats */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-[#0b1021]/60 border border-white/10 rounded-2xl p-4">
@@ -268,6 +355,53 @@ const ManagerActivityRegistrationsPage = () => {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* QR Code Modal */}
+        {showQrModal && qrCode && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="bg-[#0b1021] border border-white/10 rounded-2xl p-6 max-w-md w-full mx-4">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-semibold text-white">Mã QR điểm danh</h3>
+                <button
+                  onClick={() => setShowQrModal(false)}
+                  className="p-2 rounded-lg hover:bg-white/10 transition"
+                >
+                  <XCircle size={20} className="text-slate-400" />
+                </button>
+              </div>
+              <div className="bg-white p-6 rounded-xl mb-4 flex items-center justify-center">
+                <div className="text-center">
+                  <QrCode size={120} className="text-slate-900 mx-auto mb-4" />
+                  <p className="text-xs text-slate-500 mb-2">Mã QR Code</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div className="bg-white/5 border border-white/10 rounded-lg p-3">
+                  <p className="text-xs text-slate-400 mb-1">Mã QR:</p>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 text-sm font-mono text-cyan-300 break-all">{qrCode}</code>
+                    <button
+                      onClick={handleCopyQRCode}
+                      className="p-2 rounded-lg hover:bg-white/10 transition flex-shrink-0"
+                      title="Sao chép"
+                    >
+                      <Copy size={16} className="text-slate-400" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Gửi mã QR này cho sinh viên để họ có thể điểm danh. Mã QR chỉ có hiệu lực trong thời gian điểm danh đã được thiết lập.
+                </p>
+                <button
+                  onClick={() => setShowQrModal(false)}
+                  className="w-full px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 rounded-lg text-sm transition"
+                >
+                  Đóng
+                </button>
+              </div>
             </div>
           </div>
         )}

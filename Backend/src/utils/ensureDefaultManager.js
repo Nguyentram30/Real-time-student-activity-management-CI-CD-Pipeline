@@ -11,8 +11,11 @@ export const ensureDefaultManager = async () => {
   if (existing) {
     if (existing.role !== "manager") {
       existing.role = "manager";
-      await existing.save();
     }
+    existing.emailVerified = true;
+    existing.isActive = true;
+    existing.status = "active";
+    await existing.save();
     return;
   }
 
@@ -24,6 +27,8 @@ export const ensureDefaultManager = async () => {
     displayName,
     role: "manager",
     status: "active",
+    emailVerified: true,
+    isActive: true,
   });
 
   console.log("Default manager account ready:");

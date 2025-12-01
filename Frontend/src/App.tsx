@@ -9,6 +9,10 @@ import ActivityPage from "@/pages/ActivityPage";
 import ActivityDetailPage from "@/pages/ActivityDetailPage";
 import ContactPage from "@/pages/ContactPage";
 import NotificationsPage from "@/pages/NotificationsPage";
+import PersonalInfoPage from "@/pages/PersonalInfoPage";
+import RegisteredActivitiesPage from "@/pages/RegisteredActivitiesPage";
+import CompletedActivitiesPage from "@/pages/CompletedActivitiesPage";
+import ChangePasswordPage from "@/pages/ChangePasswordPage";
 import { Toaster } from "@/components/ui/toaster";
 import AdminDashboardPage from "@/Admin/pages/AdminDashboardPage";
 import AdminUsersPage from "@/Admin/pages/AdminUsersPage";
@@ -24,6 +28,7 @@ import ManagerDashboardPage from "@/Manager/pages/ManagerDashboardPage";
 import ManagerActivitiesPage from "@/Manager/pages/ManagerActivitiesPage";
 import ManagerActivityCreatePage from "@/Manager/pages/ManagerActivityCreatePage";
 import ManagerActivityRegistrationsPage from "@/Manager/pages/ManagerActivityRegistrationsPage";
+import ManagerEvidenceApprovalPage from "@/Manager/pages/ManagerEvidenceApprovalPage";
 import ManagerNotificationsPage from "@/Manager/pages/ManagerNotificationsPage";
 import ManagerNotificationCreatePage from "@/Manager/pages/ManagerNotificationCreatePage";
 import ManagerStudentsPage from "@/Manager/pages/ManagerStudentsPage";
@@ -46,6 +51,12 @@ function App() {
           <Route path="/NotificationsPage" element={<NotificationsPage />} />
           <Route path="/LoginPage" element={<LoginPage />} />
           <Route path="/SignUp" element={<SignUp />} />
+
+          {/* USER PAGES */}
+          <Route path="/user/profile" element={<PersonalInfoPage />} />
+          <Route path="/user/registered-activities" element={<RegisteredActivitiesPage />} />
+          <Route path="/user/completed-activities" element={<CompletedActivitiesPage />} />
+          <Route path="/user/change-password" element={<ChangePasswordPage />} />
 
           {/* ADMIN */}
           <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
@@ -153,6 +164,14 @@ function App() {
             element={
               <ManagerRoute>
                 <ManagerActivityRegistrationsPage />
+              </ManagerRoute>
+            }
+          />
+          <Route
+            path="/manager/activities/:id/evidence"
+            element={
+              <ManagerRoute>
+                <ManagerEvidenceApprovalPage />
               </ManagerRoute>
             }
           />

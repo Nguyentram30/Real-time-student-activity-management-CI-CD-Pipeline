@@ -20,6 +20,8 @@ const ManagerEditActivityModal: React.FC<EditActivityModalProps> = ({ activity, 
     type: activity.type || "general",
     startTime: activity.startTime ? new Date(activity.startTime).toISOString().slice(0, 16) : "",
     endTime: activity.endTime ? new Date(activity.endTime).toISOString().slice(0, 16) : "",
+    start_checkin_time: activity.start_checkin_time ? new Date(activity.start_checkin_time).toISOString().slice(0, 16) : "",
+    end_checkin_time: activity.end_checkin_time ? new Date(activity.end_checkin_time).toISOString().slice(0, 16) : "",
     maxParticipants: activity.maxParticipants?.toString() || "",
   });
 
@@ -30,12 +32,26 @@ const ManagerEditActivityModal: React.FC<EditActivityModalProps> = ({ activity, 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate check-in times
+    if (formData.start_checkin_time && formData.end_checkin_time) {
+      const startCheckIn = new Date(formData.start_checkin_time);
+      const endCheckIn = new Date(formData.end_checkin_time);
+      
+      if (endCheckIn <= startCheckIn) {
+        toast.error("Thời gian kết thúc điểm danh phải lớn hơn thời gian bắt đầu điểm danh");
+        return;
+      }
+    }
+    
     setLoading(true);
     try {
       await managerService.updateActivity(activity._id, {
         ...formData,
         startTime: formData.startTime ? new Date(formData.startTime).toISOString() : undefined,
         endTime: formData.endTime ? new Date(formData.endTime).toISOString() : undefined,
+        start_checkin_time: formData.start_checkin_time ? new Date(formData.start_checkin_time).toISOString() : undefined,
+        end_checkin_time: formData.end_checkin_time ? new Date(formData.end_checkin_time).toISOString() : undefined,
         maxParticipants: formData.maxParticipants ? parseInt(formData.maxParticipants) : undefined,
       });
       toast.success("Đã cập nhật hoạt động");
@@ -69,6 +85,26 @@ const ManagerEditActivityModal: React.FC<EditActivityModalProps> = ({ activity, 
           </select>
           <input type="datetime-local" name="startTime" value={formData.startTime} onChange={handleChange} className="w-full px-3 py-2 rounded border" />
           <input type="datetime-local" name="endTime" value={formData.endTime} onChange={handleChange} className="w-full px-3 py-2 rounded border" />
+          <div className="border-t pt-4 mt-4">
+            <label className="block text-sm font-medium mb-2">Thời gian điểm danh</label>
+            <input 
+              type="datetime-local" 
+              name="start_checkin_time" 
+              value={formData.start_checkin_time} 
+              onChange={handleChange} 
+              placeholder="Bắt đầu điểm danh"
+              className="w-full px-3 py-2 rounded border mb-2" 
+            />
+            <input 
+              type="datetime-local" 
+              name="end_checkin_time" 
+              value={formData.end_checkin_time} 
+              onChange={handleChange} 
+              placeholder="Kết thúc điểm danh"
+              className="w-full px-3 py-2 rounded border" 
+            />
+            <p className="text-xs text-gray-500 mt-1">Thời gian kết thúc phải lớn hơn thời gian bắt đầu</p>
+          </div>
           <input name="maxParticipants" value={formData.maxParticipants} onChange={handleChange} placeholder="Số lượng tối đa" className="w-full px-3 py-2 rounded border" type="number" min="0" />
           <DialogFooter className="flex gap-2 justify-end">
             <Button type="submit" disabled={loading}>LƯU</Button>

@@ -38,6 +38,21 @@ const ManagerDashboardPage = () => {
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const statusChipMap: Record<
+    string,
+    { style: string; label: string }
+  > = {
+    Draft: { style: "bg-slate-500/20 text-slate-300", label: "Bản nháp" },
+    Pending: { style: "bg-amber-500/20 text-amber-300", label: "Chờ duyệt" },
+    Approved: { style: "bg-green-500/20 text-green-300", label: "Đã phê duyệt" },
+    ApprovedWithCondition: { style: "bg-emerald-500/20 text-emerald-300", label: "Phê duyệt có điều kiện" },
+    NeedEdit: { style: "bg-indigo-500/20 text-indigo-300", label: "Cần chỉnh sửa" },
+    Rejected: { style: "bg-red-500/20 text-red-300", label: "Bị từ chối" },
+    Open: { style: "bg-cyan-500/20 text-cyan-300", label: "Đang diễn ra" },
+    Completed: { style: "bg-blue-500/20 text-blue-300", label: "Đã kết thúc" },
+    Cancelled: { style: "bg-rose-500/20 text-rose-300", label: "Đã hủy" },
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -225,14 +240,10 @@ const ManagerDashboardPage = () => {
                       </span>
                       <span
                         className={`px-2 py-0.5 rounded-full text-xs ${
-                          activity.status === "Đang mở"
-                            ? "bg-green-500/20 text-green-300"
-                            : activity.status === "Chờ phê duyệt" || activity.status === "Chờ duyệt"
-                            ? "bg-amber-500/20 text-amber-300"
-                            : "bg-slate-500/20 text-slate-300"
+                          statusChipMap[activity.status]?.style || "bg-slate-500/20 text-slate-300"
                         }`}
                       >
-                        {activity.status}
+                        {statusChipMap[activity.status]?.label || activity.status}
                       </span>
                     </div>
                   </div>

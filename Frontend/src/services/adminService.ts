@@ -74,6 +74,26 @@ export const adminService = {
     return res.data;
   },
 
+  async approveActivity(id: string, payload?: { note?: string }) {
+    const res = await api.post<AdminActivity>(`/admin/activities/${id}/approve`, payload);
+    return res.data;
+  },
+
+  async approveActivityWithCondition(id: string, payload: { condition: string }) {
+    const res = await api.post<AdminActivity>(`/admin/activities/${id}/approve-with-condition`, payload);
+    return res.data;
+  },
+
+  async requestActivityEdit(id: string, payload: { feedback: string }) {
+    const res = await api.post<AdminActivity>(`/admin/activities/${id}/request-edit`, payload);
+    return res.data;
+  },
+
+  async rejectActivity(id: string, payload: { reason: string }) {
+    const res = await api.post<AdminActivity>(`/admin/activities/${id}/reject`, payload);
+    return res.data;
+  },
+
   async deleteActivity(id: string) {
     await api.delete(`/admin/activities/${id}`);
   },

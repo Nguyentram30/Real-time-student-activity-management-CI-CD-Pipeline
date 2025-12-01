@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import ManagerLayout from "../components/ManagerLayout";
 import {
   Activity,
@@ -14,11 +14,13 @@ import {
   Users,
   XCircle,
   Loader2,
+  Copy,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { managerService } from "@/services/managerService";
 import ManagerEditActivityModal from "../components/ManagerEditActivityModal";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const ManagerActivitiesPage = () => {
   const [activities, setActivities] = useState<any[]>([]);
@@ -27,29 +29,67 @@ const ManagerActivitiesPage = () => {
   const [dateFilter, setDateFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [exportOpenId, setExportOpenId] = useState<string | null>(null);
+  const [cloneModalOpen, setCloneModalOpen] = useState(false);
+  const [completedActivities, setCompletedActivities] = useState<any[]>([]);
+  const [loadingCompleted, setLoadingCompleted] = useState(false);
+  const [cloningId, setCloningId] = useState<string | null>(null);
+
+  const fetchActivities = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await managerService.getActivities({
+        search: searchTerm || undefined,
+        status: statusFilter !== "all" ? statusFilter : undefined,
+        dateFilter: dateFilter !== "all" ? dateFilter : undefined,
+      });
+      setActivities(data);
+    } catch (error: any) {
+      console.error("Failed to fetch activities:", error);
+      const errorMessage = error?.response?.data?.message || error?.message || "Không thể tải danh sách hoạt động";
+      toast.error(errorMessage);
+      setActivities([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [searchTerm, statusFilter, dateFilter]);
 
   useEffect(() => {
-    const fetchActivities = async () => {
-      try {
-        setLoading(true);
-        const data = await managerService.getActivities({
-          search: searchTerm || undefined,
-          status: statusFilter !== "all" ? statusFilter : undefined,
-          dateFilter: dateFilter !== "all" ? dateFilter : undefined,
-        });
-        setActivities(data);
-      } catch (error: any) {
-        console.error("Failed to fetch activities:", error);
-        const errorMessage = error?.response?.data?.message || error?.message || "Không thể tải danh sách hoạt động";
-        toast.error(errorMessage);
-        setActivities([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchActivities();
-  }, [searchTerm, statusFilter, dateFilter]);
+  }, [fetchActivities]);
+
+  const loadCompletedActivities = useCallback(async () => {
+    try {
+      setLoadingCompleted(true);
+      const data = await managerService.getCompletedActivities();
+      setCompletedActivities(data);
+    } catch (error: any) {
+      const message = error?.response?.data?.message || error?.message || "Không thể tải hoạt động đã kết thúc";
+      toast.error(message);
+      setCompletedActivities([]);
+    } finally {
+      setLoadingCompleted(false);
+    }
+  }, []);
+
+  const handleCloneActivity = async (activityId: string) => {
+    try {
+      setCloningId(activityId);
+      await managerService.cloneActivity(activityId);
+      toast.success("Đã tạo bản sao nháp. Bạn có thể chỉnh sửa trong danh sách Bản nháp.");
+      setCloneModalOpen(false);
+      fetchActivities();
+    } catch (error: any) {
+      const message = error?.response?.data?.message || error?.message || "Không thể sao chép hoạt động";
+      toast.error(message);
+    } finally {
+      setCloningId(null);
+    }
+  };
+
+  const openCloneModal = () => {
+    setCloneModalOpen(true);
+    loadCompletedActivities();
+  };
 
   const downloadBlob = (content: BlobPart, filename: string, type = "text/csv;charset=utf-8;") => {
     const blob = new Blob([content], { type });
@@ -126,12 +166,17 @@ const ManagerActivitiesPage = () => {
 
   const getStatusBadge = (status: string) => {
     const statusMap: Record<string, { style: string; label: string }> = {
-      "Chờ phê duyệt": { style: "bg-amber-500/20 text-amber-300 border-amber-400/40", label: "Chờ phê duyệt" },
-      "Đang mở": { style: "bg-green-500/20 text-green-300 border-green-400/40", label: "Đang mở" },
-      "Đã kết thúc": { style: "bg-blue-500/20 text-blue-300 border-blue-400/40", label: "Đã kết thúc" },
-      "Đã hủy": { style: "bg-red-500/20 text-red-300 border-red-400/40", label: "Đã hủy" },
+      Draft: { style: "bg-slate-500/20 text-slate-200 border-slate-400/40", label: "Bản nháp" },
+      Pending: { style: "bg-amber-500/20 text-amber-300 border-amber-400/40", label: "Chờ duyệt" },
+      Approved: { style: "bg-green-500/20 text-green-300 border-green-400/40", label: "Đã phê duyệt" },
+      ApprovedWithCondition: { style: "bg-emerald-500/20 text-emerald-300 border-emerald-400/40", label: "Phê duyệt có điều kiện" },
+      NeedEdit: { style: "bg-indigo-500/20 text-indigo-300 border-indigo-400/40", label: "Cần chỉnh sửa" },
+      Rejected: { style: "bg-red-500/20 text-red-300 border-red-400/40", label: "Bị từ chối" },
+      Open: { style: "bg-cyan-500/20 text-cyan-300 border-cyan-400/40", label: "Đang diễn ra" },
+      Completed: { style: "bg-blue-500/20 text-blue-300 border-blue-400/40", label: "Đã kết thúc" },
+      Cancelled: { style: "bg-rose-500/20 text-rose-300 border-rose-400/40", label: "Đã hủy" },
     };
-    
+
     const statusInfo = statusMap[status] || { style: "bg-slate-500/20 text-slate-300 border-slate-400/40", label: status };
     return (
       <span className={`px-3 py-1 rounded-full text-xs font-medium border ${statusInfo.style}`}>
@@ -141,17 +186,28 @@ const ManagerActivitiesPage = () => {
   };
 
   return (
-    <ManagerLayout
+    <>
+      <ManagerLayout
       title="Quản lý hoạt động"
       subtitle="Tạo, quản lý và theo dõi các hoạt động"
       actions={
-        <Link
-          to="/manager/activities/create"
-          className="px-6 py-2.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-xl transition flex items-center gap-2"
-        >
-          <Plus size={18} />
-          Tạo hoạt động mới
-        </Link>
+        <div className="flex flex-wrap gap-3">
+          <Link
+            to="/manager/activities/create"
+            className="px-6 py-2.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-xl transition flex items-center gap-2"
+          >
+            <Plus size={18} />
+            Tạo hoạt động mới
+          </Link>
+          <button
+            type="button"
+            onClick={openCloneModal}
+            className="px-6 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition flex items-center gap-2 text-sm"
+          >
+            <Copy size={16} />
+            Sao chép hoạt động
+          </button>
+        </div>
       }
     >
       {/* Filters */}
@@ -178,8 +234,13 @@ const ManagerActivitiesPage = () => {
               className="bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400/60 text-blue-500"
             >
               <option value="all">Tất cả trạng thái</option>
+              <option value="draft">Bản nháp</option>
               <option value="pending">Chờ duyệt</option>
-              <option value="ongoing">Đang diễn ra</option>
+              <option value="approved">Đã phê duyệt</option>
+              <option value="approvedwithcondition">Phê duyệt có điều kiện</option>
+              <option value="neededit">Cần chỉnh sửa</option>
+              <option value="rejected">Bị từ chối</option>
+              <option value="active">Đang diễn ra</option>
               <option value="completed">Đã kết thúc</option>
               <option value="cancelled">Đã hủy</option>
             </select>
@@ -259,6 +320,13 @@ const ManagerActivitiesPage = () => {
                     <CheckCircle2 size={16} />
                     Duyệt đăng ký ({activity.participantCount || 0})
                   </Link>
+                  <Link
+                    to={`/manager/activities/${activity._id}/evidence`}
+                    className="px-4 py-2 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-400/40 text-purple-300 rounded-lg text-sm transition flex items-center gap-2"
+                  >
+                    <CheckCircle2 size={16} />
+                    Duyệt minh chứng
+                  </Link>
                   <div className="relative">
                     <button
                       onClick={() => setExportOpenId((prev) => (prev === activity._id ? null : activity._id))}
@@ -275,21 +343,65 @@ const ManagerActivitiesPage = () => {
                       </div>
                     )}
                   </div>
-                  <ManagerEditActivityModal activity={activity} onUpdated={() => {
-                    // refresh list
-                    setLoading(true);
-                    managerService.getActivities({ search: searchTerm || undefined, status: statusFilter !== "all" ? statusFilter : undefined, dateFilter: dateFilter !== "all" ? dateFilter : undefined })
-                      .then((data) => setActivities(data))
-                      .catch(() => {})
-                      .finally(() => setLoading(false));
-                  }} />
+                  <ManagerEditActivityModal activity={activity} onUpdated={fetchActivities} />
                 </div>
               </div>
             </div>
           ))
         )}
       </div>
-    </ManagerLayout>
+      </ManagerLayout>
+      <Dialog open={cloneModalOpen} onOpenChange={setCloneModalOpen}>
+        <DialogContent className="bg-[#0b1021] border border-white/10 text-white max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl">Sao chép hoạt động đã hoàn thành</DialogTitle>
+          </DialogHeader>
+          {loadingCompleted ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-cyan-400" />
+            </div>
+          ) : completedActivities.length === 0 ? (
+            <p className="text-sm text-slate-400">Chưa có hoạt động hoàn thành để sao chép.</p>
+          ) : (
+            <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+              {completedActivities.map((activity) => (
+                <div
+                  key={activity._id}
+                  className="border border-white/10 rounded-xl p-4 flex flex-col md:flex-row md:items-center gap-3"
+                >
+                  <div className="flex-1">
+                    <p className="font-semibold">{activity.title}</p>
+                    <p className="text-xs text-slate-400">
+                      {activity.startTime ? new Date(activity.startTime).toLocaleDateString("vi-VN") : ""}{" "}
+                      {activity.endTime && `- ${new Date(activity.endTime).toLocaleDateString("vi-VN")}`}
+                    </p>
+                    <p className="text-xs text-slate-500">{activity.location}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleCloneActivity(activity._id)}
+                    disabled={cloningId === activity._id}
+                    className="px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 rounded-lg text-sm transition flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {cloningId === activity._id ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Đang sao chép...
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={16} />
+                        Sao chép
+                      </>
+                    )}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };
 

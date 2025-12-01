@@ -8,6 +8,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Label } from "../ui/label";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useNavigate } from "react-router";
+import { useState } from "react";
+import api from "@/lib/axios";
+import { toast } from "sonner";
 
 const signUpSchema = z.object({
   firstname: z.string().min(1, "Tên bắt buộc phải có"),
@@ -15,6 +18,10 @@ const signUpSchema = z.object({
   username: z.string().min(3, "Tên đăng nhập phải có ít nhất 3 ký tự"),
   email: z.string().email("Email không hợp lệ"),
   password: z.string().min(6, "Mật khẩu phải có ít nhất 6 ký tự"),
+  confirmPassword: z.string().min(1, "Xác nhận mật khẩu không được để trống"),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: "Mật khẩu xác nhận không khớp.",
+  path: ["confirmPassword"],
 });
 
 type SignUpFormValues = z.infer<typeof signUpSchema>;
@@ -22,16 +29,81 @@ type SignUpFormValues = z.infer<typeof signUpSchema>;
 export function SignupForm({ className, ...props }: React.ComponentProps<"div">) {
   const { signUp } = useAuthStore();
   const navigate = useNavigate();
+  const [emailError, setEmailError] = useState<string>("");
+  const [checkingEmail, setCheckingEmail] = useState(false);
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
+    watch,
+    setError,
   } = useForm<SignUpFormValues>({
     resolver: zodResolver(signUpSchema),
   });
 
+  const emailValue = watch("email");
+
+  // Kiểm tra email khi blur hoặc khi submit
+  const checkEmailExists = async (email: string) => {
+    if (!email || !email.includes("@")) return;
+    
+    try {
+      setCheckingEmail(true);
+      // Gọi API kiểm tra email (giả sử có endpoint này)
+      // Nếu không có endpoint thực, có thể validate format email
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        setEmailError("Email không đúng định dạng");
+        return false;
+      }
+      
+      // Kiểm tra email có tồn tại trong hệ thống không
+      try {
+        await api.post("/auth/check-email", { email });
+        setEmailError("");
+        return true;
+      } catch (error: any) {
+        // Nếu email đã tồn tại hoặc không hợp lệ
+        if (error.response?.status === 409) {
+          setEmailError("Email đã được sử dụng");
+          return false;
+        }
+        // Nếu không có endpoint, chỉ validate format
+        setEmailError("");
+        return true;
+      }
+    } catch (error) {
+      // Nếu không có endpoint check-email, chỉ validate format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        setEmailError("Email không đúng định dạng");
+        return false;
+      }
+      setEmailError("");
+      return true;
+    } finally {
+      setCheckingEmail(false);
+    }
+  };
+
   const onSubmit = async (data: SignUpFormValues) => {
-    const { firstname, lastname, username, email, password } = data;
+    const { firstname, lastname, username, email, password, confirmPassword } = data;
+
+    // Kiểm tra xác nhận mật khẩu
+    if (password !== confirmPassword) {
+      setError("confirmPassword", {
+        type: "manual",
+        message: "Mật khẩu xác nhận không khớp.",
+      });
+      return;
+    }
+
+    // Kiểm tra email trước khi submit
+    const emailValid = await checkEmailExists(email);
+    if (!emailValid) {
+      toast.error("Email không tồn tại. Vui lòng kiểm tra lại.");
+      return;
+    }
 
     // gọi backend để signup
     await signUp(username, password, email, firstname, lastname);
@@ -41,7 +113,7 @@ export function SignupForm({ className, ...props }: React.ComponentProps<"div">)
 
   return (
     <div
-      className={cn("flex flex-col gap-6", className)}
+      className={cn("flex  flex-col gap-6", className)}
       {...props}
     >
       <Card className="overflow-hidden p-0 border-border">
@@ -143,10 +215,22 @@ export function SignupForm({ className, ...props }: React.ComponentProps<"div">)
                   type="email"
                   id="email"
                   placeholder="m@gmail.com"
-                  {...register("email")}
+                  {...register("email", {
+                    onBlur: (e) => {
+                      if (e.target.value) {
+                        checkEmailExists(e.target.value);
+                      }
+                    },
+                  })}
                 />
                 {errors.email && (
                   <p className="text-destructive text-sm">{errors.email.message}</p>
+                )}
+                {emailError && (
+                  <p className="text-destructive text-sm">{emailError}</p>
+                )}
+                {checkingEmail && (
+                  <p className="text-muted-foreground text-sm">Đang kiểm tra email...</p>
                 )}
               </div>
 
@@ -166,6 +250,26 @@ export function SignupForm({ className, ...props }: React.ComponentProps<"div">)
                 {errors.password && (
                   <p className="text-destructive text-sm">
                     {errors.password.message}
+                  </p>
+                )}
+              </div>
+
+              {/* confirm password */}
+              <div className="flex flex-col gap-3">
+                <Label
+                  htmlFor="confirmPassword"
+                  className="block text-sm"
+                >
+                  Xác nhận mật khẩu
+                </Label>
+                <Input
+                  type="password"
+                  id="confirmPassword"
+                  {...register("confirmPassword")}
+                />
+                {errors.confirmPassword && (
+                  <p className="text-destructive text-sm">
+                    {errors.confirmPassword.message}
                   </p>
                 )}
               </div>

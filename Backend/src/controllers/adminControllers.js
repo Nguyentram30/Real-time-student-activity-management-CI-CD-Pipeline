@@ -1,20 +1,81 @@
 import bcrypt from "bcrypt";
 import User from "../models/User.js";
-import Activity from "../models/Activity.js";
+import Activity, { ACTIVITY_STATUSES } from "../models/Activity.js";
 import Notification from "../models/Notification.js";
 import Document from "../models/Document.js";
 import AdvancedFeature from "../models/AdvancedFeature.js";
 import SystemWidget from "../models/SystemWidget.js";
 import Report from "../models/Report.js";
 import ActivityRegistration from "../models/ActivityRegistration.js";
+import { sendEmail } from "../services/emailService.js";
 
 const formatSearchRegex = (value) => new RegExp(value, "i");
+const ACTIVE_STATUSES = ["Approved", "ApprovedWithCondition", "Open"];
+const REVIEW_STATUSES = ["Pending", "NeedEdit"];
+const COMPLETED_STATUSES = ["Completed"];
+const STATUS_FILTER_MAP = {
+  draft: ["Draft"],
+  pending: ["Pending"],
+  approved: ["Approved"],
+  approvedwithcondition: ["ApprovedWithCondition"],
+  neededit: ["NeedEdit"],
+  rejected: ["Rejected"],
+  active: ACTIVE_STATUSES,
+  open: ["Open"],
+  completed: COMPLETED_STATUSES,
+  cancelled: ["Cancelled"],
+};
+
+const resolveStatusFilter = (value) => {
+  if (!value || value === "all") return null;
+  const normalized = value.toLowerCase();
+  if (STATUS_FILTER_MAP[normalized]) {
+    return STATUS_FILTER_MAP[normalized];
+  }
+  if (ACTIVITY_STATUSES.includes(value)) {
+    return [value];
+  }
+  return null;
+};
+
+const sanitizeStatusInput = (status) => {
+  if (!status) return undefined;
+  if (ACTIVITY_STATUSES.includes(status)) return status;
+  return undefined;
+};
+
+const notifyManagerOfReview = async (activity, { title, message }) => {
+  const manager = await User.findById(activity.createdBy).select("email displayName");
+  if (!manager) return;
+
+  await Notification.create({
+    title,
+    message,
+    targetRoles: ["manager"],
+    relatedActivity: activity._id,
+    createdBy: activity.lastReviewedBy || activity.createdBy,
+    metadata: {
+      managerId: activity.createdBy.toString(),
+      activityId: activity._id.toString(),
+    },
+  });
+
+  if (manager.email) {
+    await sendEmail({
+      to: manager.email,
+      subject: `[STU Leader] ${title}`,
+      html: `<p>Xin chào ${manager.displayName || "Quản lý"},</p>
+        <p>${message}</p>
+        <p>Hoạt động: <strong>${activity.title}</strong></p>`,
+    });
+  }
+};
 
 export const getDashboardOverview = async (_req, res) => {
   const [students, managers, activeActivities, documents] = await Promise.all([
     User.countDocuments({ role: "student" }),
     User.countDocuments({ role: { $in: ["manager", "admin"] } }),
-    Activity.countDocuments({ status: "Đang mở" }),
+    Activity.countDocuments({ status: { $in: ACTIVE_STATUSES } }),
     Document.countDocuments(),
   ]);
 
@@ -63,15 +124,61 @@ export const listUsers = async (req, res) => {
 };
 
 export const createUser = async (req, res) => {
-  const { username, email, password, displayName, role = "student", status = "active" } = req.body;
+  const { 
+    username, 
+    email, 
+    password, 
+    displayName, 
+    role = "student", 
+    status = "active",
+    studentCode,
+    phoneNumber,
+    department,
+    class: userClass,
+    dateOfBirth,
+    address
+  } = req.body;
 
   if (!username || !email || !password || !displayName) {
     return res.status(400).json({ message: "Thiếu thông tin tạo người dùng" });
   }
 
+  // Validate email format
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ message: "Email không đúng định dạng" });
+  }
+
+  // Check if username or email already exists
+  const existingUser = await User.findOne({ 
+    $or: [{ username }, { email }] 
+  });
+  if (existingUser) {
+    return res.status(409).json({ message: "Username hoặc email đã tồn tại" });
+  }
+
   const hashedPassword = await bcrypt.hash(password, 10);
-  const user = await User.create({ username, email, hashedPassword, displayName, role, status });
-  res.status(201).json(user);
+  const user = await User.create({ 
+    username, 
+    email, 
+    hashedPassword, 
+    displayName, 
+    role, 
+    status,
+    emailVerified: true,
+    isActive: true,
+    studentCode,
+    phoneNumber,
+    department,
+    class: userClass,
+    dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+    address
+  });
+  
+  // Remove password from response
+  const userResponse = user.toObject();
+  delete userResponse.hashedPassword;
+  
+  res.status(201).json(userResponse);
 };
 
 export const updateUser = async (req, res) => {
@@ -102,7 +209,10 @@ export const listActivities = async (req, res) => {
   const { search, status, type } = req.query;
   const filter = {};
   if (search) filter.title = formatSearchRegex(search);
-  if (status) filter.status = status;
+  const statusFilter = resolveStatusFilter(status);
+  if (statusFilter) {
+    filter.status = statusFilter.length === 1 ? statusFilter[0] : { $in: statusFilter };
+  }
   if (type) filter.type = type;
 
   const activities = await Activity.find(filter)
@@ -112,16 +222,17 @@ export const listActivities = async (req, res) => {
 };
 
 export const createActivity = async (req, res) => {
-  // Admin tạo hoạt động → tự động approved (status = "Đang mở")
+  const status = sanitizeStatusInput(req.body.status) || "Approved";
   const payload = {
     title: req.body.title,
     description: req.body.description,
     location: req.body.location,
-    type: req.body.type,
-    status: "Đang mở", // Admin không cần duyệt, tự động approved
-    startTime: req.body.startTime,
-    endTime: req.body.endTime,
-    maxParticipants: req.body.maxParticipants,
+    type: req.body.type || "general",
+    status,
+    isDraft: status === "Draft",
+    startTime: req.body.startTime ? new Date(req.body.startTime) : undefined,
+    endTime: req.body.endTime ? new Date(req.body.endTime) : undefined,
+    maxParticipants: req.body.maxParticipants ? Number(req.body.maxParticipants) : 0,
     coverImage: req.body.coverImage,
     meta: req.body.meta,
     createdBy: req.user?._id || req.body.createdBy,
@@ -133,18 +244,34 @@ export const createActivity = async (req, res) => {
 
 export const updateActivity = async (req, res) => {
   const { id } = req.params;
-  const updates = {
-    title: req.body.title,
-    description: req.body.description,
-    location: req.body.location,
-    type: req.body.type,
-    status: req.body.status,
-    startTime: req.body.startTime,
-    endTime: req.body.endTime,
-    maxParticipants: req.body.maxParticipants,
-    coverImage: req.body.coverImage,
-    meta: req.body.meta,
-  };
+  const updates = {};
+  const fields = ["title", "description", "location", "type", "coverImage"];
+  fields.forEach((field) => {
+    if (req.body[field] !== undefined) {
+      updates[field] = req.body[field];
+    }
+  });
+
+  if (req.body.status !== undefined) {
+    const sanitized = sanitizeStatusInput(req.body.status);
+    if (sanitized) {
+      updates.status = sanitized;
+      updates.isDraft = sanitized === "Draft";
+    }
+  }
+
+  if (req.body.startTime !== undefined) {
+    updates.startTime = req.body.startTime ? new Date(req.body.startTime) : undefined;
+  }
+  if (req.body.endTime !== undefined) {
+    updates.endTime = req.body.endTime ? new Date(req.body.endTime) : undefined;
+  }
+  if (req.body.maxParticipants !== undefined) {
+    updates.maxParticipants = Number(req.body.maxParticipants) || 0;
+  }
+  if (req.body.meta !== undefined) {
+    updates.meta = req.body.meta;
+  }
 
   const activity = await Activity.findByIdAndUpdate(id, updates, { new: true });
   if (!activity) return res.status(404).json({ message: "Hoạt động không tồn tại" });
@@ -155,6 +282,101 @@ export const deleteActivity = async (req, res) => {
   const { id } = req.params;
   await Activity.findByIdAndDelete(id);
   res.sendStatus(204);
+};
+
+export const approveActivity = async (req, res) => {
+  const { id } = req.params;
+  const note = req.body.note || req.body.message;
+  const activity = await Activity.findById(id);
+  if (!activity) return res.status(404).json({ message: "Hoạt động không tồn tại" });
+
+  activity.status = "Approved";
+  activity.isDraft = false;
+  activity.lastReviewedBy = req.user?._id;
+  activity.approvalNotes = note;
+  activity.conditionNote = undefined;
+  activity.editRequestNote = undefined;
+  await activity.save();
+
+  await notifyManagerOfReview(activity, {
+    title: "Hoạt động đã được phê duyệt",
+    message: note ? `Hoạt động đã được phê duyệt. Ghi chú: ${note}` : "Hoạt động đã được phê duyệt.",
+  });
+
+  res.json({ message: "Đã phê duyệt hoạt động", activity });
+};
+
+export const approveActivityWithCondition = async (req, res) => {
+  const { id } = req.params;
+  const condition = req.body.condition || req.body.note;
+  if (!condition) {
+    return res.status(400).json({ message: "Vui lòng nhập điều kiện phê duyệt" });
+  }
+  const activity = await Activity.findById(id);
+  if (!activity) return res.status(404).json({ message: "Hoạt động không tồn tại" });
+
+  activity.status = "ApprovedWithCondition";
+  activity.isDraft = false;
+  activity.lastReviewedBy = req.user?._id;
+  activity.conditionNote = condition;
+  activity.approvalNotes = undefined;
+  activity.editRequestNote = undefined;
+  await activity.save();
+
+  await notifyManagerOfReview(activity, {
+    title: "Hoạt động được phê duyệt có điều kiện",
+    message: `Hoạt động được phê duyệt với điều kiện: ${condition}`,
+  });
+
+  res.json({ message: "Đã phê duyệt hoạt động kèm điều kiện", activity });
+};
+
+export const requestActivityEdit = async (req, res) => {
+  const { id } = req.params;
+  const feedback = req.body.feedback || req.body.note || req.body.message;
+  if (!feedback) {
+    return res.status(400).json({ message: "Vui lòng nhập nội dung yêu cầu chỉnh sửa" });
+  }
+  const activity = await Activity.findById(id);
+  if (!activity) return res.status(404).json({ message: "Hoạt động không tồn tại" });
+
+  activity.status = "NeedEdit";
+  activity.isDraft = false;
+  activity.lastReviewedBy = req.user?._id;
+  activity.editRequestNote = feedback;
+  await activity.save();
+
+  await notifyManagerOfReview(activity, {
+    title: "Hoạt động cần chỉnh sửa",
+    message: `Hoạt động cần chỉnh sửa với phản hồi: ${feedback}`,
+  });
+
+  res.json({ message: "Đã yêu cầu chỉnh sửa", activity });
+};
+
+export const rejectActivity = async (req, res) => {
+  const { id } = req.params;
+  const reason = req.body.reason || req.body.note || req.body.message;
+  if (!reason) {
+    return res.status(400).json({ message: "Vui lòng nhập lý do từ chối" });
+  }
+  const activity = await Activity.findById(id);
+  if (!activity) return res.status(404).json({ message: "Hoạt động không tồn tại" });
+
+  activity.status = "Rejected";
+  activity.isDraft = false;
+  activity.lastReviewedBy = req.user?._id;
+  activity.approvalNotes = reason;
+  activity.conditionNote = undefined;
+  activity.editRequestNote = undefined;
+  await activity.save();
+
+  await notifyManagerOfReview(activity, {
+    title: "Hoạt động bị từ chối",
+    message: `Hoạt động đã bị từ chối. Lý do: ${reason}`,
+  });
+
+  res.json({ message: "Đã từ chối hoạt động", activity });
 };
 
 // Students
@@ -337,9 +559,9 @@ export const getReportSummary = async (req, res) => {
   const [totalActivities, totalStudents, approvedActivities, pendingActivities, rejectedActivities, activitiesInPeriod] = await Promise.all([
     Activity.countDocuments(),
     User.countDocuments({ role: "student" }),
-    Activity.countDocuments({ status: "Đang mở" }),
-    Activity.countDocuments({ status: "Chờ phê duyệt" }),
-    Activity.countDocuments({ status: "Đã hủy" }),
+    Activity.countDocuments({ status: { $in: ACTIVE_STATUSES } }),
+    Activity.countDocuments({ status: { $in: REVIEW_STATUSES } }),
+    Activity.countDocuments({ status: "Cancelled" }),
     Activity.countDocuments({ createdAt: { $gte: startDate, $lte: endDate } }),
   ]);
 

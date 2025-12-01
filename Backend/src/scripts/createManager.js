@@ -30,6 +30,8 @@ const run = async () => {
       existing.role = role;
       existing.hashedPassword = hashedPassword;
       existing.status = "active";
+      existing.emailVerified = true;
+      existing.isActive = true;
       await existing.save();
       console.log(`✅ Updated user ${username} with role ${role}.`);
     } else {
@@ -40,6 +42,8 @@ const run = async () => {
         displayName,
         role,
         status: "active",
+        emailVerified: true,
+        isActive: true,
       });
       console.log(`✅ Created manager user ${username} successfully.`);
     }

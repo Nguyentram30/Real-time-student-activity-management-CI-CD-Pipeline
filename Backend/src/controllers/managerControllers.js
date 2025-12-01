@@ -1,11 +1,203 @@
 import User from "../models/User.js";
-import Activity from "../models/Activity.js";
+import Activity, { ACTIVITY_STATUSES } from "../models/Activity.js";
 import Notification from "../models/Notification.js";
 import ActivityRegistration from "../models/ActivityRegistration.js";
 import Feedback from "../models/Feedback.js";
+import ActivityQRCode from "../models/ActivityQRCode.js";
 import { getFileUrl } from "../utils/uploadMiddleware.js";
+import { sendEmail } from "../services/emailService.js";
 
 const formatSearchRegex = (value) => new RegExp(value, "i");
+
+const MANAGER_ALLOWED_CREATE_STATUSES = new Set(["Draft", "Pending"]);
+const ACTIVE_STATUSES = ["Approved", "ApprovedWithCondition", "Open"];
+const COMPLETED_STATUSES = ["Completed"];
+const NON_BLOCKING_STATUSES = ["Cancelled", "Rejected"];
+const STATUS_FILTER_MAP = {
+  draft: ["Draft"],
+  pending: ["Pending"],
+  approved: ["Approved"],
+  approvedwithcondition: ["ApprovedWithCondition"],
+  neededit: ["NeedEdit"],
+  rejected: ["Rejected"],
+  active: ACTIVE_STATUSES,
+  open: ["Open"],
+  completed: COMPLETED_STATUSES,
+  cancelled: ["Cancelled"],
+};
+
+const resolveStatusFilter = (value) => {
+  if (!value || value === "all") return null;
+  const normalized = value.toLowerCase();
+  if (STATUS_FILTER_MAP[normalized]) {
+    return STATUS_FILTER_MAP[normalized];
+  }
+  if (ACTIVITY_STATUSES.includes(value)) {
+    return [value];
+  }
+  return null;
+};
+
+const toBoolean = (value, fallback = false) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    return value.toLowerCase() === "true";
+  }
+  return fallback;
+};
+
+const sanitizeStatus = (requestedStatus = "Pending") => {
+  if (!requestedStatus || !ACTIVITY_STATUSES.includes(requestedStatus)) {
+    return "Pending";
+  }
+  return requestedStatus;
+};
+
+const getStatusForCreation = (status) => {
+  const normalized = sanitizeStatus(status);
+  if (MANAGER_ALLOWED_CREATE_STATUSES.has(normalized)) {
+    return normalized;
+  }
+  return "Pending";
+};
+
+const buildConflictQuery = ({ location, startTime, endTime, excludeId }) => {
+  if (!location || !startTime || !endTime) return null;
+  return {
+    location,
+    _id: excludeId ? { $ne: excludeId } : undefined,
+    status: { $nin: NON_BLOCKING_STATUSES },
+    startTime: { $lt: endTime },
+    endTime: { $gt: startTime },
+  };
+};
+
+const suggestAlternativeSlots = (startTime, endTime) => {
+  const suggestions = [];
+  if (!startTime || !endTime) return suggestions;
+  const durationMs = endTime.getTime() - startTime.getTime();
+  let cursor = new Date(endTime.getTime());
+  for (let i = 0; i < 2; i++) {
+    const suggestedStart = new Date(cursor.getTime() + i * durationMs);
+    const suggestedEnd = new Date(suggestedStart.getTime() + durationMs);
+    suggestions.push({
+      startTime: suggestedStart.toISOString(),
+      endTime: suggestedEnd.toISOString(),
+      label: `${suggestedStart.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })} - ${suggestedEnd.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`,
+    });
+  }
+  return suggestions;
+};
+
+const detectConflicts = async ({ location, startTime, endTime, excludeId }) => {
+  const query = buildConflictQuery({ location, startTime, endTime, excludeId });
+  if (!query) return [];
+  return Activity.find(query).select("title startTime endTime location status");
+};
+
+const notifyAdminsOfNewActivity = async (activity) => {
+  const admins = await User.find({ role: "admin", status: "active" }).select("email displayName");
+  if (admins.length === 0) return;
+
+  await Notification.create({
+    title: "Hoạt động mới chờ phê duyệt",
+    message: `Hoạt động "${activity.title}" cần được phê duyệt.`,
+    targetRoles: ["admin"],
+    relatedActivity: activity._id,
+    createdBy: activity.createdBy,
+    metadata: {
+      activityId: activity._id.toString(),
+      managerId: activity.createdBy.toString(),
+    },
+  });
+
+  const emailRecipients = admins.filter((admin) => admin.email);
+  await Promise.all(
+    emailRecipients.map((admin) =>
+      sendEmail({
+        to: admin.email,
+        subject: "[STU Leader] Hoạt động mới cần phê duyệt",
+        html: `<p>Xin chào ${admin.displayName || "Admin"},</p>
+        <p>Hoạt động <strong>${activity.title}</strong> vừa được gửi chờ phê duyệt.</p>
+        <p>Vui lòng truy cập hệ thống để xử lý.</p>`,
+      })
+    )
+  );
+};
+
+const validateCheckInWindow = (start, end) => {
+  if (start && end && end <= start) {
+    return "Thời gian kết thúc điểm danh phải lớn hơn thời gian bắt đầu điểm danh";
+  }
+  return null;
+};
+
+const parseMeta = (body = {}) => {
+  const tags = Array.isArray(body.tags)
+    ? body.tags
+    : typeof body.tags === "string"
+    ? body.tags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+    : [];
+
+  const meta = {
+    visibility: body.meta?.visibility || body.visibility || "public",
+    tags,
+    responsiblePerson: body.meta?.responsiblePerson || body.responsiblePerson,
+    points: body.meta?.points ?? (body.points ? Number(body.points) : 0),
+    documentUrl: body.meta?.documentUrl || body.documentUrl,
+  };
+
+  if (body.meta?.attachments || body.attachments) {
+    const attachments = Array.isArray(body.meta?.attachments || body.attachments)
+      ? body.meta?.attachments || body.attachments
+      : String(body.meta?.attachments || body.attachments)
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+    meta.attachments = attachments;
+  }
+
+  return meta;
+};
+
+const buildActivityPayload = (body, managerId, status) => {
+  const startTime = body.startTime ? new Date(body.startTime) : undefined;
+  const endTime = body.endTime ? new Date(body.endTime) : undefined;
+  const startCheckIn = body.start_checkin_time ? new Date(body.start_checkin_time) : undefined;
+  const endCheckIn = body.end_checkin_time ? new Date(body.end_checkin_time) : undefined;
+  const evidenceDeadline = body.EvidenceDeadline ? new Date(body.EvidenceDeadline) : undefined;
+  const attendanceTime = body.AttendanceTime ? new Date(body.AttendanceTime) : undefined;
+
+  return {
+    title: body.title,
+    description: body.description,
+    location: body.location,
+    type: body.type || "general",
+    status,
+    isDraft: status === "Draft",
+    parentActivity: body.parentActivity || body.parentActivityId || undefined,
+    startTime,
+    endTime,
+    start_checkin_time: startCheckIn,
+    end_checkin_time: endCheckIn,
+    EvidenceDeadline: evidenceDeadline,
+    AttendanceTime: attendanceTime,
+    maxParticipants: body.maxParticipants ? Number(body.maxParticipants) : 0,
+    coverImage: body.coverImage,
+    participantCount: body.participantCount || 0,
+    createdBy: managerId,
+    meta: parseMeta(body),
+  };
+};
+
+const mergeMeta = (currentMeta = {}, body = {}) => {
+  const base = { ...(currentMeta?.toObject ? currentMeta.toObject() : currentMeta) };
+  const parsed = parseMeta(body);
+  return { ...base, ...parsed };
+};
 
 // Dashboard
 export const getManagerDashboard = async (req, res) => {
@@ -13,11 +205,11 @@ export const getManagerDashboard = async (req, res) => {
   
   const [totalActivities, pendingRegistrations, totalStudents, totalNotifications, activeActivities, completedActivities] = await Promise.all([
     Activity.countDocuments({ createdBy: managerId }),
-    Activity.countDocuments({ createdBy: managerId, status: "Chờ phê duyệt" }),
+    Activity.countDocuments({ createdBy: managerId, status: { $in: ["Pending", "NeedEdit"] } }),
     User.countDocuments({ role: "student" }), // Có thể filter theo đơn vị quản lý
     Notification.countDocuments({ createdBy: managerId }),
-    Activity.countDocuments({ createdBy: managerId, status: "Đang mở" }),
-    Activity.countDocuments({ createdBy: managerId, status: "Đã kết thúc" }),
+    Activity.countDocuments({ createdBy: managerId, status: { $in: ACTIVE_STATUSES } }),
+    Activity.countDocuments({ createdBy: managerId, status: { $in: COMPLETED_STATUSES } }),
   ]);
 
   return res.json({
@@ -37,7 +229,10 @@ export const listManagerActivities = async (req, res) => {
   
   const filter = { createdBy: managerId };
   if (search) filter.title = formatSearchRegex(search);
-  if (status && status !== "all") filter.status = status;
+  const statusFilter = resolveStatusFilter(status);
+  if (statusFilter) {
+    filter.status = statusFilter.length === 1 ? statusFilter[0] : { $in: statusFilter };
+  }
   
   // Date filter logic
   if (dateFilter && dateFilter !== "all") {
@@ -61,47 +256,203 @@ export const listManagerActivities = async (req, res) => {
 
 export const createManagerActivity = async (req, res) => {
   const managerId = req.user._id;
-  const payload = {
-    title: req.body.title,
-    description: req.body.description,
-    location: req.body.location,
-    type: req.body.type,
-    status: req.body.status,
-    startTime: req.body.startTime,
-    endTime: req.body.endTime,
-    maxParticipants: req.body.maxParticipants,
-    coverImage: req.body.coverImage,
-    meta: req.body.meta,
-    createdBy: managerId,
-  };
+  try {
+    const requestedStatus = getStatusForCreation(req.body.status || req.body.action);
+    const payload = buildActivityPayload(req.body, managerId, requestedStatus);
 
-  const activity = await Activity.create(payload);
-  res.status(201).json(activity);
+    const validationMessage = validateCheckInWindow(payload.start_checkin_time, payload.end_checkin_time);
+    if (validationMessage) {
+      return res.status(400).json({ message: validationMessage });
+    }
+
+    const ignoreConflicts = toBoolean(req.body.ignoreConflicts, false);
+    if (!ignoreConflicts) {
+      const conflicts = await detectConflicts({
+        location: payload.location,
+        startTime: payload.startTime,
+        endTime: payload.endTime,
+      });
+      if (conflicts.length > 0) {
+        return res.status(409).json({
+          message: `Địa điểm ${payload.location} đã có hoạt động trong cùng thời gian.`,
+          conflicts,
+          suggestions: suggestAlternativeSlots(payload.startTime, payload.endTime),
+        });
+      }
+    }
+
+    const activity = await Activity.create(payload);
+
+    if (requestedStatus !== "Draft") {
+      await notifyAdminsOfNewActivity(activity);
+    }
+
+    res.status(201).json(activity);
+  } catch (error) {
+    console.error("createManagerActivity error", error);
+    res.status(500).json({ message: "Không thể tạo hoạt động" });
+  }
+};
+
+export const previewManagerActivity = async (req, res) => {
+  const managerId = req.user._id;
+  try {
+    const status = getStatusForCreation(req.body.status || req.body.action);
+    const payload = buildActivityPayload(req.body, managerId, status);
+
+    if (!payload.startTime || !payload.endTime) {
+      return res.status(400).json({ message: "Vui lòng nhập đầy đủ thời gian bắt đầu và kết thúc" });
+    }
+
+    const validationMessage = validateCheckInWindow(payload.start_checkin_time, payload.end_checkin_time);
+    if (validationMessage) {
+      return res.status(400).json({ message: validationMessage });
+    }
+
+    const durationMinutes = Math.round((payload.endTime - payload.startTime) / (1000 * 60));
+    res.json({
+      preview: {
+        ...payload,
+        durationMinutes,
+      },
+    });
+  } catch (error) {
+    console.error("previewManagerActivity error", error);
+    res.status(500).json({ message: "Không thể tạo bản xem trước" });
+  }
+};
+
+export const checkActivityConflicts = async (req, res) => {
+  try {
+    const { location, startTime, endTime, activityId } = req.body;
+    if (!location || !startTime || !endTime) {
+      return res.status(400).json({ message: "Thiếu thông tin địa điểm hoặc thời gian" });
+    }
+
+    const conflicts = await detectConflicts({
+      location,
+      startTime: new Date(startTime),
+      endTime: new Date(endTime),
+      excludeId: activityId,
+    });
+
+    res.json({
+      hasConflict: conflicts.length > 0,
+      conflicts,
+      suggestions: conflicts.length > 0 ? suggestAlternativeSlots(new Date(startTime), new Date(endTime)) : [],
+    });
+  } catch (error) {
+    console.error("checkActivityConflicts error", error);
+    res.status(500).json({ message: "Không thể kiểm tra xung đột" });
+  }
 };
 
 export const updateManagerActivity = async (req, res) => {
   const { id } = req.params;
   const managerId = req.user._id;
   
-  const activity = await Activity.findOne({ _id: id, createdBy: managerId });
-  if (!activity) {
-    return res.status(404).json({ message: "Hoạt động không tồn tại hoặc không có quyền" });
-  }
+  try {
+    const activity = await Activity.findOne({ _id: id, createdBy: managerId });
+    if (!activity) {
+      return res.status(404).json({ message: "Hoạt động không tồn tại hoặc không có quyền" });
+    }
 
-  Object.assign(activity, {
-    title: req.body.title ?? activity.title,
-    description: req.body.description ?? activity.description,
-    location: req.body.location ?? activity.location,
-    type: req.body.type ?? activity.type,
-    status: req.body.status ?? activity.status,
-    startTime: req.body.startTime ?? activity.startTime,
-    endTime: req.body.endTime ?? activity.endTime,
-    maxParticipants: req.body.maxParticipants ?? activity.maxParticipants,
-    coverImage: req.body.coverImage ?? activity.coverImage,
-    meta: req.body.meta ?? activity.meta,
-  });
-  await activity.save();
-  res.json(activity);
+    const updatedStartTime = req.body.startTime ? new Date(req.body.startTime) : activity.startTime;
+    const updatedEndTime = req.body.endTime ? new Date(req.body.endTime) : activity.endTime;
+    const updatedLocation = req.body.location ?? activity.location;
+
+    const newStartCheckIn =
+      req.body.start_checkin_time !== undefined
+        ? req.body.start_checkin_time
+          ? new Date(req.body.start_checkin_time)
+          : undefined
+        : activity.start_checkin_time;
+    const newEndCheckIn =
+      req.body.end_checkin_time !== undefined
+        ? req.body.end_checkin_time
+          ? new Date(req.body.end_checkin_time)
+          : undefined
+        : activity.end_checkin_time;
+
+    const validationMessage = validateCheckInWindow(newStartCheckIn, newEndCheckIn);
+    if (validationMessage) {
+      return res.status(400).json({ message: validationMessage });
+    }
+
+    const ignoreConflicts = toBoolean(req.body.ignoreConflicts, false);
+    if (!ignoreConflicts && updatedLocation && updatedStartTime && updatedEndTime) {
+      const conflicts = await detectConflicts({
+        location: updatedLocation,
+        startTime: updatedStartTime,
+        endTime: updatedEndTime,
+        excludeId: id,
+      });
+      if (conflicts.length > 0) {
+        return res.status(409).json({
+          message: `Địa điểm ${updatedLocation} đã có hoạt động trong cùng thời gian.`,
+          conflicts,
+          suggestions: suggestAlternativeSlots(updatedStartTime, updatedEndTime),
+        });
+      }
+    }
+
+    const metaKeys = ["meta", "tags", "responsiblePerson", "points", "documentUrl", "visibility", "attachments"];
+    const shouldUpdateMeta = metaKeys.some((key) => req.body[key] !== undefined);
+
+    if (req.body.title !== undefined) activity.title = req.body.title;
+    if (req.body.description !== undefined) activity.description = req.body.description;
+    if (req.body.location !== undefined) activity.location = req.body.location;
+    if (req.body.type !== undefined) activity.type = req.body.type;
+    if (req.body.startTime !== undefined) activity.startTime = updatedStartTime;
+    if (req.body.endTime !== undefined) activity.endTime = updatedEndTime;
+    if (req.body.start_checkin_time !== undefined) activity.start_checkin_time = newStartCheckIn;
+    if (req.body.end_checkin_time !== undefined) activity.end_checkin_time = newEndCheckIn;
+    if (req.body.EvidenceDeadline !== undefined) {
+      activity.EvidenceDeadline = req.body.EvidenceDeadline ? new Date(req.body.EvidenceDeadline) : undefined;
+    }
+    if (req.body.AttendanceTime !== undefined) {
+      activity.AttendanceTime = req.body.AttendanceTime ? new Date(req.body.AttendanceTime) : undefined;
+    }
+    if (req.body.maxParticipants !== undefined) {
+      activity.maxParticipants = Number(req.body.maxParticipants) || 0;
+    }
+    if (req.body.coverImage !== undefined) activity.coverImage = req.body.coverImage || undefined;
+    if (shouldUpdateMeta) {
+      activity.meta = mergeMeta(activity.meta, req.body);
+    }
+
+    let nextStatus = activity.status;
+    let notifyAdmin = false;
+    if (req.body.status) {
+      const requestedStatus = sanitizeStatus(req.body.status);
+      if (activity.status === "Draft" || activity.status === "NeedEdit") {
+        if (requestedStatus === "Draft" || requestedStatus === "Pending") {
+          nextStatus = requestedStatus;
+          notifyAdmin = requestedStatus === "Pending";
+        }
+      }
+    }
+
+    const statusChanged = nextStatus !== activity.status;
+    if (statusChanged) {
+      activity.status = nextStatus;
+      activity.isDraft = nextStatus === "Draft";
+      if (nextStatus !== "NeedEdit") {
+        activity.editRequestNote = undefined;
+      }
+    }
+
+    await activity.save();
+
+    if (notifyAdmin) {
+      await notifyAdminsOfNewActivity(activity);
+    }
+
+    res.json(activity);
+  } catch (error) {
+    console.error("updateManagerActivity error", error);
+    res.status(500).json({ message: "Không thể cập nhật hoạt động" });
+  }
 };
 
 export const deleteManagerActivity = async (req, res) => {
@@ -113,6 +464,59 @@ export const deleteManagerActivity = async (req, res) => {
     return res.status(404).json({ message: "Hoạt động không tồn tại hoặc không có quyền" });
   }
   res.sendStatus(204);
+};
+
+export const listCompletedActivities = async (req, res) => {
+  const managerId = req.user._id;
+  const { limit = 20 } = req.query;
+  const parsedLimit = Math.max(1, Math.min(Number(limit) || 20, 100));
+
+  const activities = await Activity.find({
+    createdBy: managerId,
+    status: { $in: COMPLETED_STATUSES },
+  })
+    .sort({ endTime: -1 })
+    .limit(parsedLimit)
+    .select("title startTime endTime location meta points status");
+
+  res.json({ activities });
+};
+
+export const cloneManagerActivity = async (req, res) => {
+  const { id } = req.params;
+  const managerId = req.user._id;
+  try {
+    const source = await Activity.findOne({ _id: id, createdBy: managerId });
+    if (!source) {
+      return res.status(404).json({ message: "Hoạt động nguồn không tồn tại hoặc không có quyền" });
+    }
+
+    const cloned = await Activity.create({
+      title: `${source.title} (Bản sao)`,
+      description: source.description,
+      location: source.location,
+      type: source.type,
+      status: "Draft",
+      isDraft: true,
+      parentActivity: source._id,
+      startTime: source.startTime,
+      endTime: source.endTime,
+      start_checkin_time: source.start_checkin_time,
+      end_checkin_time: source.end_checkin_time,
+      EvidenceDeadline: source.EvidenceDeadline,
+      AttendanceTime: source.AttendanceTime,
+      maxParticipants: source.maxParticipants,
+      coverImage: source.coverImage,
+      participantCount: 0,
+      createdBy: managerId,
+      meta: source.meta?.toObject ? source.meta.toObject() : source.meta,
+    });
+
+    res.status(201).json(cloned);
+  } catch (error) {
+    console.error("cloneManagerActivity error", error);
+    res.status(500).json({ message: "Không thể sao chép hoạt động" });
+  }
 };
 
 // Students
@@ -286,6 +690,65 @@ export const rejectRegistration = async (req, res) => {
   res.json({ message: "Đã từ chối đăng ký", registration });
 };
 
+// Evidence Approval
+export const approveEvidence = async (req, res) => {
+  const { id, registrationId } = req.params;
+  const managerId = req.user._id;
+
+  // Verify activity belongs to manager
+  const activity = await Activity.findOne({ _id: id, createdBy: managerId });
+  if (!activity) {
+    return res.status(404).json({ message: "Hoạt động không tồn tại hoặc không có quyền" });
+  }
+
+  const registration = await ActivityRegistration.findOne({
+    _id: registrationId,
+    activity: id,
+  });
+
+  if (!registration) {
+    return res.status(404).json({ message: "Đăng ký không tồn tại" });
+  }
+
+  if (!registration.evidenceUrl && !registration.evidenceNote) {
+    return res.status(400).json({ message: "Sinh viên chưa nộp minh chứng" });
+  }
+
+  registration.status = "completed";
+  await registration.save();
+
+  res.json({ message: "Đã duyệt minh chứng hoàn thành", registration });
+};
+
+export const rejectEvidence = async (req, res) => {
+  const { id, registrationId } = req.params;
+  const managerId = req.user._id;
+
+  // Verify activity belongs to manager
+  const activity = await Activity.findOne({ _id: id, createdBy: managerId });
+  if (!activity) {
+    return res.status(404).json({ message: "Hoạt động không tồn tại hoặc không có quyền" });
+  }
+
+  const registration = await ActivityRegistration.findOne({
+    _id: registrationId,
+    activity: id,
+  });
+
+  if (!registration) {
+    return res.status(404).json({ message: "Đăng ký không tồn tại" });
+  }
+
+  // Reset evidence and status to checked_in (require re-upload)
+  registration.evidenceUrl = undefined;
+  registration.evidenceNote = undefined;
+  registration.status = "checked_in";
+  registration.note = req.body.reason || "Minh chứng không đạt yêu cầu, vui lòng upload lại";
+  await registration.save();
+
+  res.json({ message: "Đã từ chối minh chứng, yêu cầu upload lại", registration });
+};
+
 // Reports
 export const getManagerReports = async (req, res) => {
   const managerId = req.user._id;
@@ -293,7 +756,7 @@ export const getManagerReports = async (req, res) => {
   const [totalActivities, totalStudents, completedActivities] = await Promise.all([
     Activity.countDocuments({ createdBy: managerId }),
     User.countDocuments({ role: "student" }),
-    Activity.countDocuments({ createdBy: managerId, status: "Đã kết thúc" }),
+    Activity.countDocuments({ createdBy: managerId, status: { $in: COMPLETED_STATUSES } }),
   ]);
 
   const rate = totalActivities > 0 ? Math.round((completedActivities / totalActivities) * 100) : 0;
@@ -416,6 +879,69 @@ export const replyFeedback = async (req, res) => {
   } catch (error) {
     console.error("Reply feedback error", error);
     res.status(500).json({ message: "Không thể phản hồi feedback" });
+  }
+};
+
+// QR Code Management
+export const createActivityQRCode = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const managerId = req.user._id;
+    const { expiresAt } = req.body;
+
+    // Verify activity belongs to manager
+    const activity = await Activity.findOne({ _id: id, createdBy: managerId });
+    if (!activity) {
+      return res.status(404).json({ message: "Hoạt động không tồn tại hoặc không có quyền" });
+    }
+
+    // Generate QR code (simple format: ACTIVITY_ID_TIMESTAMP)
+    const qrCode = `ACT-${id}-${Date.now()}-${Math.random().toString(36).substring(7).toUpperCase()}`;
+
+    // Delete existing QR code if any
+    await ActivityQRCode.findOneAndDelete({ activity: id });
+
+    // Create new QR code
+    const qrCodeRecord = await ActivityQRCode.create({
+      activity: id,
+      qrCode,
+      expiresAt: expiresAt ? new Date(expiresAt) : undefined,
+      isActive: true,
+      createdBy: managerId,
+    });
+
+    res.json({ 
+      message: "Tạo mã QR thành công",
+      qrCode: qrCodeRecord.qrCode,
+      qrCodeRecord 
+    });
+  } catch (error) {
+    console.error("Create QR code error", error);
+    res.status(500).json({ message: "Không thể tạo mã QR" });
+  }
+};
+
+export const getActivityQRCode = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const managerId = req.user._id;
+
+    // Verify activity belongs to manager
+    const activity = await Activity.findOne({ _id: id, createdBy: managerId });
+    if (!activity) {
+      return res.status(404).json({ message: "Hoạt động không tồn tại hoặc không có quyền" });
+    }
+
+    const qrCodeRecord = await ActivityQRCode.findOne({ activity: id, isActive: true });
+
+    if (!qrCodeRecord) {
+      return res.status(404).json({ message: "Chưa có mã QR cho hoạt động này" });
+    }
+
+    res.json({ qrCodeRecord });
+  } catch (error) {
+    console.error("Get QR code error", error);
+    res.status(500).json({ message: "Không thể lấy mã QR" });
   }
 };
 

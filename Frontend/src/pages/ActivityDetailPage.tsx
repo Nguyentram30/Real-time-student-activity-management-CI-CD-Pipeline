@@ -45,6 +45,14 @@ interface ActivityDetail {
   };
   registered?: boolean;
   registrationStatus?: string;
+  start_checkin_time?: string;
+  end_checkin_time?: string;
+  AttendanceTime?: string;
+  EvidenceDeadline?: string;
+  evidenceUrl?: string;
+  evidenceNote?: string;
+  evidence?: string;
+  isClosed?: boolean;
 }
 
 export default function ActivityDetailPage() {
@@ -55,6 +63,10 @@ export default function ActivityDetailPage() {
   const [activity, setActivity] = useState<ActivityDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [registrations, setRegistrations] = useState<any[]>([]);
+  const [checkInLoading, setCheckInLoading] = useState(false);
+  const [geoLoading, setGeoLoading] = useState(false);
+  const [registerLoading, setRegisterLoading] = useState(false);
+  const [uploadLoading, setUploadLoading] = useState(false);
 
   useEffect(() => {
     if (!id) {
@@ -102,6 +114,140 @@ export default function ActivityDetailPage() {
     fetchActivityDetail();
   }, [id, navigate, isLoggedIn]);
 
+  // Hàm refresh activity data
+  const refreshActivity = async () => {
+    if (!id) return;
+    try {
+      const res = await api.get(`/activities`);
+      const activities = Array.isArray(res.data) ? res.data : [];
+      const found = activities.find((act: any) => act.id === id || act._id === id);
+      if (found) {
+        setActivity(found);
+      }
+    } catch (error) {
+      console.error("Lỗi refresh activity:", error);
+    }
+  };
+
+  // Hàm đăng ký hoạt động
+  const handleRegister = async () => {
+    if (!activity || !id) return;
+    try {
+      setRegisterLoading(true);
+      const res = await api.post(`/activities/${id}/register`);
+      toast.success(res.data?.message || "Đăng ký thành công");
+      await refreshActivity();
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err?.response?.data?.message || "Đăng ký thất bại");
+    } finally {
+      setRegisterLoading(false);
+    }
+  };
+
+  // Hàm điểm danh GPS
+  const handleCheckInGPS = async () => {
+    if (!activity || !id) return;
+    if (!navigator.geolocation) {
+      toast.error("Trình duyệt không hỗ trợ Geolocation.");
+      return;
+    }
+    setGeoLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        try {
+          setCheckInLoading(true);
+          const res = await api.post(`/activities/${id}/checkin/gps`, {
+            lat: latitude,
+            lng: longitude,
+          });
+          toast.success(res.data?.message || "Điểm danh thành công (GPS)");
+          await refreshActivity();
+        } catch (err: any) {
+          console.error(err);
+          toast.error(err?.response?.data?.message || "Điểm danh GPS thất bại");
+        } finally {
+          setCheckInLoading(false);
+          setGeoLoading(false);
+        }
+      },
+      (err) => {
+        console.error("GPS error", err);
+        toast.error("Không thể lấy vị trí. Vui lòng cho phép truy cập vị trí.");
+        setGeoLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  // Hàm điểm danh QR
+  const handleCheckInQR = async () => {
+    if (!activity || !id) return;
+    const code = prompt("Nhập mã QR hoặc mã điểm danh:");
+    if (!code) return;
+    try {
+      setCheckInLoading(true);
+      const res = await api.post(`/activities/${id}/checkin/qr`, {
+        code,
+      });
+      toast.success(res.data?.message || "Điểm danh QR thành công");
+      await refreshActivity();
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err?.response?.data?.message || "Điểm danh QR thất bại");
+    } finally {
+      setCheckInLoading(false);
+    }
+  };
+
+  // Hàm nộp minh chứng
+  const handleUploadEvidence = async () => {
+    if (!activity || !id) return;
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = ".pdf,.doc,.docx,.jpg,.jpeg,.png";
+    fileInput.onchange = async (e: any) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const evidenceNote = prompt("Nhập mô tả minh chứng của bạn (tùy chọn):") || "";
+
+      try {
+        setUploadLoading(true);
+        const formData = new FormData();
+        formData.append("file", file);
+        if (evidenceNote) {
+          formData.append("evidenceNote", evidenceNote);
+        }
+
+        const uploadRes = await api.post(`/manager/upload`, formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+
+        const evidenceUrl = uploadRes.data?.fileUrl;
+        if (!evidenceUrl) {
+          toast.error("Upload file thất bại");
+          return;
+        }
+
+        await api.post(`/activities/${id}/upload`, {
+          evidenceUrl,
+          evidenceNote,
+        });
+
+        toast.success("Nộp minh chứng thành công");
+        await refreshActivity();
+      } catch (err: any) {
+        console.error(err);
+        toast.error(err?.response?.data?.message || "Nộp minh chứng thất bại");
+      } finally {
+        setUploadLoading(false);
+      }
+    };
+    fileInput.click();
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen w-screen bg-slate-950 text-white font-sans">
@@ -139,10 +285,14 @@ export default function ActivityDetailPage() {
 
   const getStatusBadge = (status: string) => {
     const statusMap: Record<string, { label: string; color: string }> = {
-      "Đang mở": { label: "Đang mở", color: "bg-green-500/20 text-green-300 border-green-400/40" },
-      "Chờ phê duyệt": { label: "Chờ phê duyệt", color: "bg-amber-500/20 text-amber-300 border-amber-400/40" },
-      "Đã kết thúc": { label: "Đã kết thúc", color: "bg-slate-500/20 text-slate-300 border-slate-400/40" },
-      "Đã hủy": { label: "Đã hủy", color: "bg-red-500/20 text-red-300 border-red-400/40" },
+      Open: { label: "Đang diễn ra", color: "bg-green-500/20 text-green-300 border-green-400/40" },
+      Approved: { label: "Đã phê duyệt", color: "bg-emerald-500/20 text-emerald-300 border-emerald-400/40" },
+      ApprovedWithCondition: { label: "Phê duyệt có điều kiện", color: "bg-teal-500/20 text-teal-300 border-teal-400/40" },
+      Pending: { label: "Chờ duyệt", color: "bg-amber-500/20 text-amber-300 border-amber-400/40" },
+      NeedEdit: { label: "Cần chỉnh sửa", color: "bg-indigo-500/20 text-indigo-300 border-indigo-400/40" },
+      Rejected: { label: "Bị từ chối", color: "bg-red-500/20 text-red-300 border-red-400/40" },
+      Completed: { label: "Đã kết thúc", color: "bg-slate-500/20 text-slate-300 border-slate-400/40" },
+      Cancelled: { label: "Đã hủy", color: "bg-rose-500/20 text-rose-300 border-rose-400/40" },
     };
     const statusInfo = statusMap[status] || { label: status, color: "bg-slate-500/20 text-slate-300 border-slate-400/40" };
     return (
@@ -294,30 +444,204 @@ export default function ActivityDetailPage() {
             </div>
           )}
 
-          {/* Registration Status (for logged in users) */}
-          {isLoggedIn && activity.registered && (
-            <div className="mt-6 p-4 bg-white/5 border border-white/10 rounded-xl">
-              <h3 className="font-semibold mb-2">Trạng thái đăng ký của bạn</h3>
-              {activity.registrationStatus === "pending" && (
+          {/* Action Buttons Section */}
+          <div className="mt-6 space-y-4">
+            {/* Đăng ký / Trạng thái đăng ký */}
+            {!isLoggedIn ? (
+              <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
+                <Link
+                  to="/LoginPage"
+                  className="w-full inline-flex justify-center items-center py-3 border border-cyan-400 text-cyan-400 hover:bg-cyan-400/10 rounded-lg font-semibold transition"
+                >
+                  Đăng nhập để đăng ký
+                </Link>
+              </div>
+            ) : activity.isClosed || activity.status === "Completed" ? (
+              <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
+                <button className="w-full py-3 bg-gray-600 rounded-lg cursor-not-allowed" disabled>
+                  Hoạt động đã đóng
+                </button>
+              </div>
+            ) : !activity.registered ? (
+              <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
+                <button
+                  onClick={handleRegister}
+                  disabled={registerLoading}
+                  className="w-full py-3 bg-blue-600 hover:bg-blue-700 rounded-lg flex items-center justify-center gap-2 text-white font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {registerLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Đang xử lý...
+                    </>
+                  ) : (
+                    "Đăng ký tham gia"
+                  )}
+                </button>
+              </div>
+            ) : activity.registrationStatus === "pending" ? (
+              <div className="p-4 bg-white/5 border border-amber-400/40 rounded-xl">
                 <div className="flex items-center gap-2 text-amber-300">
                   <Clock size={16} />
-                  <span>Đang chờ Manager duyệt</span>
+                  <span className="font-semibold">Chờ Manager duyệt</span>
                 </div>
-              )}
-              {activity.registrationStatus === "approved" && (
-                <div className="flex items-center gap-2 text-green-300">
-                  <CheckCircle2 size={16} />
-                  <span>Đã được duyệt</span>
-                </div>
-              )}
-              {activity.registrationStatus === "rejected" && (
+              </div>
+            ) : activity.registrationStatus === "rejected" ? (
+              <div className="p-4 bg-white/5 border border-red-400/40 rounded-xl">
                 <div className="flex items-center gap-2 text-red-300">
                   <XCircle size={16} />
-                  <span>Không được duyệt</span>
+                  <span className="font-semibold">Đăng ký bị từ chối</span>
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            ) : activity.registrationStatus === "approved" ? (
+              <>
+                {/* Nút điểm danh - chỉ hiển thị khi đã được duyệt */}
+                <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
+                  <h3 className="font-semibold mb-4">Điểm danh</h3>
+                  {(() => {
+                    const now = new Date();
+                    const attendanceTime = activity.AttendanceTime ? new Date(activity.AttendanceTime) : null;
+                    const startCheckIn = activity.start_checkin_time ? new Date(activity.start_checkin_time) : null;
+                    const endCheckIn = activity.end_checkin_time ? new Date(activity.end_checkin_time) : null;
+
+                    // Kiểm tra thời gian điểm danh
+                    let canCheckIn = true;
+                    let checkInMessage = "";
+
+                    if (startCheckIn && endCheckIn) {
+                      if (now < startCheckIn) {
+                        canCheckIn = false;
+                        checkInMessage = "Chưa tới thời gian điểm danh";
+                      } else if (now > endCheckIn) {
+                        canCheckIn = false;
+                        checkInMessage = "Hết hạn điểm danh";
+                      }
+                    } else if (attendanceTime) {
+                      const activityStart = activity.startTime ? new Date(activity.startTime) : null;
+                      if (activityStart && now < activityStart) {
+                        canCheckIn = false;
+                        checkInMessage = "Chưa tới thời gian điểm danh";
+                      }
+                    }
+
+                    return (
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        <button
+                          onClick={handleCheckInQR}
+                          disabled={!canCheckIn || checkInLoading}
+                          className={`flex-1 px-4 py-3 rounded-lg text-sm font-medium transition ${
+                            canCheckIn && !checkInLoading
+                              ? "bg-cyan-500 hover:bg-cyan-600 text-white"
+                              : "bg-gray-600 text-gray-300 cursor-not-allowed"
+                          }`}
+                        >
+                          {checkInLoading ? (
+                            <span className="flex items-center justify-center gap-2">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Đang xử lý...
+                            </span>
+                          ) : checkInMessage ? (
+                            checkInMessage
+                          ) : (
+                            "Điểm danh QR"
+                          )}
+                        </button>
+
+                        <button
+                          onClick={handleCheckInGPS}
+                          disabled={!canCheckIn || checkInLoading || geoLoading}
+                          className={`flex-1 px-4 py-3 rounded-lg text-sm font-medium transition ${
+                            canCheckIn && !checkInLoading && !geoLoading
+                              ? "bg-cyan-500 hover:bg-cyan-600 text-white"
+                              : "bg-gray-600 text-gray-300 cursor-not-allowed"
+                          }`}
+                        >
+                          {geoLoading ? (
+                            <span className="flex items-center justify-center gap-2">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Đang lấy vị trí...
+                            </span>
+                          ) : checkInLoading ? (
+                            <span className="flex items-center justify-center gap-2">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Đang xử lý...
+                            </span>
+                          ) : checkInMessage ? (
+                            checkInMessage
+                          ) : (
+                            "Điểm danh GPS"
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Nộp minh chứng */}
+                {activity.registrationStatus === "approved" && (!activity.evidence && !activity.evidenceUrl && !activity.evidenceNote) && (
+                  <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
+                    {(() => {
+                      const now = new Date();
+                      const evidenceDeadline = activity.EvidenceDeadline ? new Date(activity.EvidenceDeadline) : null;
+                      const canUpload = !evidenceDeadline || now <= evidenceDeadline;
+
+                      return canUpload ? (
+                        <button
+                          onClick={handleUploadEvidence}
+                          disabled={uploadLoading}
+                          className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 rounded-lg flex items-center justify-center gap-2 text-white font-semibold transition disabled:opacity-50"
+                        >
+                          {uploadLoading ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Đang xử lý...
+                            </>
+                          ) : (
+                            "Nộp minh chứng"
+                          )}
+                        </button>
+                      ) : (
+                        <div className="w-full py-3 bg-gray-500/20 border border-gray-400/40 text-gray-300 rounded-lg flex items-center justify-center gap-2 font-semibold">
+                          Hết hạn nộp minh chứng
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* Hiển thị minh chứng đã nộp */}
+                {(activity.evidence || activity.evidenceUrl || activity.evidenceNote) && (
+                  <div className="p-4 bg-white/5 border border-cyan-400/40 rounded-xl">
+                    <div className="flex items-center gap-2 text-cyan-300">
+                      <CheckCircle2 size={16} />
+                      <span className="font-semibold">Minh chứng đã nộp</span>
+                    </div>
+                    {activity.evidenceNote && (
+                      <p className="text-sm text-slate-300 mt-2">{activity.evidenceNote}</p>
+                    )}
+                    {activity.evidenceUrl && (
+                      <a
+                        href={activity.evidenceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-cyan-400 hover:underline mt-2 inline-block"
+                      >
+                        Xem file minh chứng
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {/* Trạng thái đăng ký */}
+                <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
+                  <div className="flex items-center gap-2 text-green-300">
+                    <CheckCircle2 size={16} />
+                    <span className="font-semibold">Đã được duyệt</span>
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </div>
 
           {/* Registered Students List (for Manager/Admin) */}
           {registrations.length > 0 && (

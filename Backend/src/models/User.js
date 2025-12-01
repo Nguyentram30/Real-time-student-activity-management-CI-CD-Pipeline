@@ -39,6 +39,20 @@ const userSchema = new mongoose.Schema(
       sparse: true,
       trim: true,
     },
+    dateOfBirth: {
+      type: Date,
+    },
+    class: {
+      type: String,
+      trim: true,
+    },
+    address: {
+      type: String,
+      trim: true,
+    },
+    avatar: {
+      type: String,
+    },
     avatarUrl: {
       type: String,
     },
@@ -49,10 +63,33 @@ const userSchema = new mongoose.Schema(
       type: String,
       maxlength: 500,
     },
+    emailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    isActive: {
+      type: Boolean,
+      default: false,
+    },
+    emailVerifyToken: {
+      type: String,
+    },
+    emailVerifyTokenExpiresAt: {
+      type: Date,
+    },
+    unverifiedExpiresAt: {
+      type: Date,
+    },
+    passwordResetToken: {
+      type: String,
+    },
+    passwordResetTokenExpiresAt: {
+      type: Date,
+    },
     role: {
       type: String,
-      enum: ["student", "manager", "admin"],
-      default: "student",
+      enum: ["student", "manager", "admin", "guest"],
+      default: "guest",
     },
     lastLoginAt: {
       type: Date,
@@ -65,6 +102,14 @@ const userSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+  }
+);
+
+userSchema.index(
+  { unverifiedExpiresAt: 1 },
+  {
+    expireAfterSeconds: 0,
+    partialFilterExpression: { emailVerified: false },
   }
 );
 

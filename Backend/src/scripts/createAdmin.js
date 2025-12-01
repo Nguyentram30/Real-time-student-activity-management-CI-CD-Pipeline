@@ -28,6 +28,9 @@ const run = async () => {
       existing.displayName = displayName;
       existing.role = role;
       existing.hashedPassword = hashedPassword;
+      existing.emailVerified = true;
+      existing.isActive = true;
+      existing.status = "active";
       await existing.save();
       console.log(`Updated user ${username} with role ${role}.`);
     } else {
@@ -37,6 +40,9 @@ const run = async () => {
         hashedPassword,
         displayName,
         role,
+        emailVerified: true,
+        isActive: true,
+        status: "active",
       });
       console.log(`Created user ${username} with role ${role}.`);
     }
