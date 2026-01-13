@@ -3,3 +3,6 @@
 .env.*
 Backend/.env
 Frontend/.env
+# uploads
+Backend/src/uploads/
+Frontend/public/uploads/
